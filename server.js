@@ -197,8 +197,9 @@ app.get('/api/sessions', async (_req, res) => {
 });
 
 app.post('/api/workspaces', async (req, res) => {
-  const { cwd, label, command } = req.body || {};
+  let { cwd, label, command } = req.body || {};
   try {
+    if (cwd && cwd.startsWith('~')) cwd = path.join(require('node:os').homedir(), cwd.slice(1));
     const created = await herdr.request('workspace.create', { cwd, label });
     if (command) {
       await herdr.request('pane.send_text', { pane_id: created.root_pane.pane_id, text: `${command}\n` });

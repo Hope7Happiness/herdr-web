@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1117">
+<title>herdr-web</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
+    --fg: #e6edf3; --fg-dim: #8b949e;
+    --accent: #2f81f7; --border: #30363d;
+    --st-working: #3fb950; --st-blocked: #f0883e; --st-done: #2f81f7;
+    --st-idle: #6e7681; --st-unknown: #484f58;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: system-ui, sans-serif;
+    display: flex; flex-direction: column;
+    height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ---- tab bar ---- */
+  #tabbar {
+    display: flex; gap: 6px; padding: 8px 8px 6px;
+    overflow-x: auto; flex: none; scrollbar-width: none;
+    border-bottom: 1px solid var(--border); background: var(--bg2);
+    align-items: center;
+  }
+  #tabbar::-webkit-scrollbar { display: none; }
+  .tab {
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 12px; border-radius: 8px; flex: none;
+    background: var(--bg3); border: 1px solid var(--border);
+    max-width: 60vw; cursor: pointer; user-select: none;
+  }
+  .tab.active { border-color: var(--accent); background: #1c2a41; }
+  .tab .dot {
+    width: 9px; height: 9px; border-radius: 50%; flex: none;
+    background: var(--st-unknown);
+  }
+  .tab .dot.working { background: var(--st-working); animation: pulse 1.2s ease-in-out infinite; }
+  .tab .dot.blocked { background: var(--st-blocked); animation: pulse 0.8s ease-in-out infinite; }
+  .tab .dot.done { background: var(--st-done); }
+  .tab .dot.idle { background: var(--st-idle); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  .tab .lbl { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab .sub { font-size: 10px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+  .tab .txt { min-width: 0; }
+  .tab-btn {
+    flex: none; width: 34px; height: 34px; border-radius: 8px;
+    background: var(--bg3); border: 1px solid var(--border); color: var(--fg-dim);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  #conn { width: 8px; height: 8px; border-radius: 50%; background: #f85149; flex: none; margin-left: 2px; }
+  #conn.ok { background: var(--st-working); animation: none; }
+
+  /* ---- terminal ---- */
+  #termwrap { flex: 1; min-height: 0; position: relative; background: var(--bg); }
+  #term {
+    height: 100%; overflow-y: auto; overflow-x: auto;
+    font-family: 'Cascadia Mono', 'Roboto Mono', ui-monospace, monospace;
+    padding: 6px 4px; overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  #term .row { white-space: pre; line-height: 1.25; min-height: 1.25em; }
+  #term .row span { white-space: pre; }
+  .b { font-weight: 700; } .dim2 { opacity: 0.6; } .i { font-style: italic; }
+  .u { text-decoration: underline; } .st { text-decoration: line-through; }
+  #histbadge {
+    position: absolute; bottom: 12px; right: 12px; z-index: 5;
+    padding: 8px 14px; border-radius: 18px; background: var(--accent); color: #fff;
+    font-size: 13px; display: none; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.5);
+  }
+  #histbadge.show { display: block; }
+  #empty {
+    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px;
+    align-items: center; justify-content: center; color: var(--fg-dim); font-size: 14px;
+  }
+
+  /* ---- footer ---- */
+  #footer { flex: none; background: var(--bg2); border-top: 1px solid var(--border); }
+  #quickkeys {
+    display: flex; gap: 6px; padding: 6px 8px 2px; overflow-x: auto; scrollbar-width: none;
+  }
+  #quickkeys::-webkit-scrollbar { display: none; }
+  .qk {
+    flex: none; padding: 8px 13px; border-radius: 8px; font-size: 13px;
+    background: var(--bg3); border: 1px solid var(--border); color: var(--fg);
+    cursor: pointer; user-select: none; font-family: ui-monospace, monospace;
+  }
+  .qk:active { background: #2c3440; }
+  #inputrow { display: flex; gap: 8px; padding: 7px 8px 9px; align-items: flex-end; }
+  #msg {
+    flex: 1; min-height: 40px; max-height: 120px; resize: none;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; font-size: 16px; font-family: inherit;
+    outline: none;
+  }
+  #msg:focus { border-color: var(--accent); }
+  #send {
+    flex: none; width: 44px; height: 44px; border-radius: 10px; border: none;
+    background: var(--accent); color: #fff; display: flex; align-items: center;
+    justify-content: center; cursor: pointer;
+  }
+
+  /* ---- new session sheet ---- */
+  #sheet {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 20;
+  }
+  #sheet.show { display: flex; align-items: flex-end; }
+  #sheet .panel {
+    background: var(--bg2); border-radius: 16px 16px 0 0; width: 100%;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  #sheet h2 { font-size: 15px; font-weight: 600; }
+  #sheet input {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; font-size: 15px; width: 100%;
+  }
+  #sheet .actions { display: flex; gap: 10px; justify-content: flex-end; }
+  #sheet button {
+    padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg3); color: var(--fg); font-size: 14px; cursor: pointer;
+  }
+  #sheet button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+  <div id="tabbar">
+    <div id="conn" title="connection"></div>
+    <div id="tabs" style="display:flex;gap:6px;"></div>
+    <div class="tab-btn" id="newbtn" title="New session">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </div>
+  </div>
+
+  <div id="termwrap">
+    <div id="term"></div>
+    <div id="histbadge">↓ Live</div>
+    <div id="empty">
+      <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><line x1="12" y1="15" x2="17" y2="15"/></svg>
+      <div>No session selected</div>
+    </div>
+  </div>
+
+  <div id="footer">
+    <div id="quickkeys"></div>
+    <div id="inputrow">
+      <textarea id="msg" rows="1" placeholder="Type to the agent…" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+      <button id="send" title="Send">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="sheet">
+    <div class="panel">
+      <h2>New session</h2>
+      <input id="ns-cwd" placeholder="Working directory (e.g. ~/projects/…)">
+      <input id="ns-label" placeholder="Label (optional)">
+      <input id="ns-cmd" placeholder="Command (optional, e.g. claude)">
+      <div class="actions">
+        <button id="ns-cancel">Cancel</button>
+        <button id="ns-create" class="primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------------------
+// ANSI palette
+// ---------------------------------------------------------------------------
+const ANSI16 = ['#484f58','#ff7b72','#3fb950','#d29922','#58a6ff','#bc8cff','#39c5cf','#b1bac4',
+                '#6e7681','#ffa198','#56d364','#e3b341','#79c0ff','#d2a8ff','#56d4dd','#f0f6fc'];
+const PAL256 = (() => {
+  const p = ANSI16.slice();
+  const lv = [0, 95, 135, 175, 215, 255];
+  for (let r = 0; r < 6; r++) for (let g = 0; g < 6; g++) for (let b = 0; b < 6; b++)
+    p.push('#' + [lv[r], lv[g], lv[b]].map(v => v.toString(16).padStart(2, '0')).join(''));
+  for (let i = 0; i < 24; i++) {
+    const v = (8 + i * 10).toString(16).padStart(2, '0');
+    p.push(`#${v}${v}${v}`);
+  }
+  return p;
+})();
+function colorOf(c) {
+  if (!c) return null;
+  if (c[0] === '#') return c;
+  if (c[0] === 'a') return ANSI16[+c.slice(1)] || null;
+  if (c[0] === 'x') return PAL256[+c.slice(1)] || null;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const term = $('term'), tabsEl = $('tabs'), histBadge = $('histbadge'), emptyEl = $('empty');
+let ws = null, wsOk = false;
+let sessions = [];          // from server
+let activePane = localStorage.getItem('herdr-web-pane') || null;
+let histMode = false;       // true = frozen scrollback view
+let liveRows = [];          // last live screen rows
+let fontSize = +(localStorage.getItem('herdr-web-font') || 0); // 0 = auto
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+function renderRow(spans) {
+  const div = document.createElement('div');
+  div.className = 'row';
+  for (const s of spans) {
+    const el = document.createElement('span');
+    el.textContent = s.t;
+    let fg = colorOf(s.f), bg = colorOf(s.g);
+    if (s.m & 16) { const t = fg || '#e6edf3'; fg = bg || '#0d1117'; bg = t; }
+    if (fg) el.style.color = fg;
+    if (bg) el.style.backgroundColor = bg;
+    let cls = '';
+    if (s.m & 1) cls += ' b';
+    if (s.m & 2) cls += ' dim2';
+    if (s.m & 4) cls += ' i';
+    if (s.m & 8) cls += ' u';
+    if (s.m & 32) cls += ' st';
+    if (cls) el.className = cls.trim();
+    div.appendChild(el);
+  }
+  if (!spans.length) div.appendChild(document.createTextNode(' '));
+  return div;
+}
+
+function renderRows(rows) {
+  const frag = document.createDocumentFragment();
+  for (const r of rows) frag.appendChild(renderRow(r));
+  term.replaceChildren(frag);
+}
+
+function fitFont(rows) {
+  if (fontSize) { term.style.fontSize = fontSize + 'px'; return; }
+  let cols = 0;
+  for (const r of rows) {
+    let n = 0;
+    for (const s of r) n += s.t.length;
+    if (n > cols) cols = n;
+  }
+  cols = Math.max(cols, 40);
+  // monospace advance ≈ 0.602em for common mono fonts
+  const px = Math.floor((term.clientWidth - 8) / (cols * 0.602));
+  term.style.fontSize = Math.max(7, Math.min(16, px)) + 'px';
+}
+
+function showLive() {
+  histMode = false;
+  histBadge.classList.remove('show');
+  renderRows(liveRows);
+  term.scrollTop = term.scrollHeight;
+}
+
+function onScreen(rows) {
+  liveRows = rows;
+  if (!histMode) {
+    renderRows(rows);
+    fitFont(rows);
+    term.scrollTop = term.scrollHeight;
+  }
+}
+
+// Scroll-up at top => load history; badge returns to live.
+term.addEventListener('scroll', () => {
+  if (!activePane) return;
+  if (!histMode && term.scrollTop === 0 && term.scrollHeight <= term.clientHeight + 4) return;
+  if (!histMode && term.scrollTop < 10 && term.scrollHeight > term.clientHeight) {
+    // At top of the (short) live screen: user wants history.
+    histMode = true;
+    histBadge.classList.add('show');
+    send({ type: 'scrollback', pane: activePane, lines: 500 });
+  }
+});
+// Swipe-down gesture on a non-scrollable live screen also opens history.
+let touchStartY = null;
+term.addEventListener('pointerdown', (e) => { touchStartY = e.clientY; });
+term.addEventListener('pointerup', (e) => {
+  if (touchStartY == null || histMode || !activePane) return;
+  if (e.clientY - touchStartY > 60 && term.scrollTop === 0) {
+    histMode = true;
+    histBadge.classList.add('show');
+    send({ type: 'scrollback', pane: activePane, lines: 500 });
+  }
+  touchStartY = null;
+});
+histBadge.addEventListener('click', showLive);
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+function paneEntries() {
+  const out = [];
+  for (const w of sessions) for (const p of w.panes) out.push({ w, p });
+  return out;
+}
+
+function renderTabs() {
+  const frag = document.createDocumentFragment();
+  for (const { w, p } of paneEntries()) {
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (p.pane_id === activePane ? ' active' : '');
+    tab.dataset.pane = p.pane_id;
+    const dot = document.createElement('div');
+    dot.className = 'dot ' + (p.agent_status || 'unknown');
+    const txt = document.createElement('div');
+    txt.className = 'txt';
+    const lbl = document.createElement('div');
+    lbl.className = 'lbl';
+    lbl.textContent = p.agent ? `${p.agent} · ${w.label}` : w.label;
+    txt.appendChild(lbl);
+    if (p.title) {
+      const sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = p.title;
+      txt.appendChild(sub);
+    }
+    tab.append(dot, txt);
+    tab.addEventListener('click', () => selectPane(p.pane_id));
+    frag.appendChild(tab);
+  }
+  tabsEl.replaceChildren(frag);
+  emptyEl.style.display = activePane ? 'none' : 'flex';
+}
+
+function selectPane(paneId) {
+  activePane = paneId;
+  localStorage.setItem('herdr-web-pane', paneId || '');
+  histMode = false;
+  histBadge.classList.remove('show');
+  liveRows = [];
+  term.replaceChildren();
+  renderTabs();
+  if (wsOk && paneId) send({ type: 'watch', pane: paneId });
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------------
+function send(obj) { if (wsOk) ws.send(JSON.stringify(obj)); }
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => {
+    wsOk = true;
+    $('conn').classList.add('ok');
+    if (activePane) send({ type: 'watch', pane: activePane });
+  };
+  ws.onclose = () => {
+    wsOk = false;
+    $('conn').classList.remove('ok');
+    setTimeout(connect, 1500);
+  };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    switch (m.type) {
+      case 'sessions': {
+        sessions = m.sessions;
+        const known = paneEntries().map((e) => e.p.pane_id);
+        if (activePane && !known.includes(activePane)) activePane = null;
+        if (!activePane && known.length) selectPane(known[0]);
+        else renderTabs();
+        break;
+      }
+      case 'screen':
+        if (m.pane === activePane) onScreen(m.rows);
+        break;
+      case 'scrollback':
+        if (m.pane === activePane && histMode) {
+          renderRows(m.rows);
+          term.scrollTop = term.scrollHeight; // bottom of history = most recent
+        }
+        break;
+      case 'agent_status': {
+        for (const w of sessions) for (const p of w.panes)
+          if (p.pane_id === m.pane_id) p.agent_status = m.agent_status;
+        renderTabs();
+        break;
+      }
+      case 'pane_gone':
+        if (m.pane === activePane) selectPane(null);
+        break;
+    }
+  };
+}
+connect();
+
+// ---------------------------------------------------------------------------
+// Input + quick keys
+// ---------------------------------------------------------------------------
+const msg = $('msg');
+
+function sendMessage() {
+  if (!activePane) return;
+  const text = msg.value;
+  if (text) {
+    send({ type: 'input', pane: activePane, text });
+    // Small gap so TUIs register text before Enter (CC pattern).
+    setTimeout(() => send({ type: 'key', pane: activePane, keys: ['enter'] }), 120);
+  } else {
+    send({ type: 'key', pane: activePane, keys: ['enter'] });
+  }
+  msg.value = '';
+  msg.style.height = 'auto';
+  showLive();
+}
+
+$('send').addEventListener('mousedown', (e) => e.preventDefault());
+$('send').addEventListener('click', sendMessage);
+msg.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+msg.addEventListener('input', () => {
+  msg.style.height = 'auto';
+  msg.style.height = Math.min(msg.scrollHeight, 120) + 'px';
+});
+
+const QUICK_KEYS = [
+  ['Esc', ['esc']], ['Tab', ['tab']], ['⇧Tab', ['shift+tab']], ['^C', ['ctrl+c']],
+  ['↑', ['up']], ['↓', ['down']], ['←', ['left']], ['→', ['right']],
+  ['⏎', ['enter']],
+];
+const qkEl = $('quickkeys');
+for (const [label, keys] of QUICK_KEYS) {
+  const b = document.createElement('div');
+  b.className = 'qk';
+  b.textContent = label;
+  b.tabIndex = -1;
+  b.addEventListener('mousedown', (e) => e.preventDefault());
+  b.addEventListener('click', () => {
+    if (!activePane) return;
+    send({ type: 'key', pane: activePane, keys });
+    showLive();
+  });
+  qkEl.appendChild(b);
+}
+// /model chip sends text
+const modelChip = document.createElement('div');
+modelChip.className = 'qk';
+modelChip.textContent = '/model';
+modelChip.tabIndex = -1;
+modelChip.addEventListener('mousedown', (e) => e.preventDefault());
+modelChip.addEventListener('click', () => { msg.value = '/model '; msg.focus(); });
+qkEl.appendChild(modelChip);
+
+// ---------------------------------------------------------------------------
+// New session sheet
+// ---------------------------------------------------------------------------
+$('newbtn').addEventListener('click', () => $('sheet').classList.add('show'));
+$('ns-cancel').addEventListener('click', () => $('sheet').classList.remove('show'));
+$('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) $('sheet').classList.remove('show'); });
+$('ns-create').addEventListener('click', async () => {
+  const cwd = $('ns-cwd').value.trim();
+  const label = $('ns-label').value.trim() || undefined;
+  const command = $('ns-cmd').value.trim() || undefined;
+  if (!cwd) return;
+  const res = await fetch('/api/workspaces', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cwd, label, command }),
+  });
+  const data = await res.json();
+  $('sheet').classList.remove('show');
+  if (data.root_pane) selectPane(data.root_pane.pane_id);
+});
+
+// PWA service worker
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
