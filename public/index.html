@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<!-- interactive-widget=resizes-content: keyboard shrinks the LAYOUT viewport,
+     so the flex column compresses and the terminal stays visible above the
+     input (default resizes-visual pans the page and hides the terminal). -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0d1117">
 <title>herdr-web</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -286,19 +289,36 @@ term.addEventListener('scroll', () => {
     send({ type: 'scrollback', pane: activePane, lines: 500 });
   }
 });
-// Swipe-down gesture on a non-scrollable live screen also opens history.
+// Swipe-down gesture opens history. Must use TOUCH events, not pointer:
+// Android Chrome fires pointercancel one move into any touch drag (browser
+// claims the gesture), but touchmove keeps streaming (verified on emulator).
+// touch-action stays default so native div scrolling works in history mode.
 let touchStartY = null;
-term.addEventListener('pointerdown', (e) => { touchStartY = e.clientY; });
-term.addEventListener('pointerup', (e) => {
+term.addEventListener('touchstart', (e) => { touchStartY = e.touches[0]?.clientY ?? null; }, { passive: true });
+term.addEventListener('touchmove', (e) => {
   if (touchStartY == null || histMode || !activePane) return;
-  if (e.clientY - touchStartY > 60 && term.scrollTop === 0) {
-    histMode = true;
-    histBadge.classList.add('show');
-    send({ type: 'scrollback', pane: activePane, lines: 500 });
+  const y = e.touches[0]?.clientY ?? touchStartY;
+  if (y - touchStartY > 60 && term.scrollTop === 0) {
+    touchStartY = null;
+    enterHistory();
   }
-  touchStartY = null;
-});
+}, { passive: true });
+term.addEventListener('touchend', () => { touchStartY = null; });
+// Desktop: wheel-up at top opens history too.
+term.addEventListener('wheel', (e) => {
+  if (!histMode && activePane && e.deltaY < 0 && term.scrollTop === 0) enterHistory();
+}, { passive: true });
+function enterHistory() {
+  histMode = true;
+  histBadge.classList.add('show');
+  send({ type: 'scrollback', pane: activePane, lines: 500 });
+}
 histBadge.addEventListener('click', showLive);
+
+// Keyboard open/close resizes the layout — keep the live tail in view.
+window.addEventListener('resize', () => {
+  if (!histMode) term.scrollTop = term.scrollHeight;
+});
 
 // ---------------------------------------------------------------------------
 // Tabs
