@@ -414,7 +414,7 @@ function renderTabs() {
     txt.className = 'txt';
     const lbl = document.createElement('div');
     lbl.className = 'lbl';
-    lbl.textContent = p.agent ? `${p.agent} · ${w.label}` : w.label;
+    lbl.textContent = (p.name || p.agent) ? `${p.name || p.agent} · ${w.label}` : w.label;
     txt.appendChild(lbl);
     const sub = document.createElement('div');
     sub.className = 'sub';

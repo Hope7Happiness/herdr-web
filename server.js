@@ -80,6 +80,7 @@ function sessionList() {
           focused: p.focused,
           agent_status: p.agent_status,
           agent: agent?.agent || null,
+          name: agent?.name || null,
           title: agent?.terminal_title_stripped || p.terminal_title_stripped || null,
           cwd: p.foreground_cwd || p.cwd,
         };
@@ -266,10 +267,20 @@ wss.on('connection', (ws) => {
           await herdr.request('pane.send_keys', { pane_id: msg.pane, keys: msg.keys });
           break;
         }
-        case 'submit': { // text + Enter in ONE atomic PTY write (pane.send_input).
-          // Two separate requests race: Enter can land mid-paste and get
-          // swallowed by the TUI (bit us — drafts stuck in CC's input box).
-          await herdr.request('pane.send_input', { pane_id: msg.pane, text: msg.text || '', keys: ['enter'] });
+        case 'submit': {
+          // Prefer herdr's agent.prompt — it submits text+Enter while
+          // honoring the pane's live bracketed-paste mode, which raw
+          // send_input does not (drafts got stuck in CC's input box).
+          // Falls back to one atomic pane.send_input for plain shell panes.
+          if (msg.text) {
+            try {
+              await herdr.request('agent.prompt', { target: msg.pane, text: msg.text });
+            } catch (e) {
+              await herdr.request('pane.send_input', { pane_id: msg.pane, text: msg.text, keys: ['enter'] });
+            }
+          } else {
+            await herdr.request('pane.send_keys', { pane_id: msg.pane, keys: ['enter'] });
+          }
           break;
         }
         case 'resize': { // desired pane size from the client's viewport fit
