@@ -8,6 +8,9 @@ const express = require('express');
 const { WebSocketServer } = require('ws');
 const herdr = require('./lib/herdr-client');
 const { parseAnsiScreen } = require('./lib/ansi');
+const { SizeDriver } = require('./lib/size-driver');
+
+const sizeDriver = new SizeDriver();
 
 // Deliberately NOT process.env.PORT — that leaks from parent shells (bit us:
 // inherited PORT=7681 = tmux-web's port).
@@ -256,6 +259,18 @@ wss.on('connection', (ws) => {
         }
         case 'key': { // named keys, e.g. ["enter"], ["ctrl+c"]
           await herdr.request('pane.send_keys', { pane_id: msg.pane, keys: msg.keys });
+          break;
+        }
+        case 'submit': { // text + Enter in ONE atomic PTY write (pane.send_input).
+          // Two separate requests race: Enter can land mid-paste and get
+          // swallowed by the TUI (bit us — drafts stuck in CC's input box).
+          await herdr.request('pane.send_input', { pane_id: msg.pane, text: msg.text || '', keys: ['enter'] });
+          break;
+        }
+        case 'resize': { // desired pane size from the client's viewport fit
+          if (Number.isFinite(msg.cols) && Number.isFinite(msg.rows)) {
+            sizeDriver.setPaneSize(Math.round(msg.cols), Math.round(msg.rows));
+          }
           break;
         }
         case 'scrollback': {

@@ -315,9 +315,36 @@ function enterHistory() {
 }
 histBadge.addEventListener('click', showLive);
 
+// ---------------------------------------------------------------------------
+// Viewport fit -> drive the herdr runtime size (tmux-web-style readable width)
+// ---------------------------------------------------------------------------
+const TARGET_FONT = 13;   // comfortable phone font; server resizes herdr to fit
+const LINE_H = 1.25;
+function measureCharW(px) {
+  const c = measureCharW._ctx || (measureCharW._ctx = document.createElement('canvas').getContext('2d'));
+  c.font = `${px}px 'Cascadia Mono', 'Roboto Mono', ui-monospace, monospace`;
+  return c.measureText('MMMMMMMMMM').width / 10;
+}
+let maxInnerH = window.innerHeight;
+function sendFit() {
+  if (!wsOk) return;
+  const charW = measureCharW(TARGET_FONT);
+  const cols = Math.floor((term.clientWidth - 8) / charW);
+  const rows = Math.floor((term.clientHeight - 12) / (TARGET_FONT * LINE_H));
+  if (cols >= 20 && rows >= 10) send({ type: 'resize', cols, rows });
+}
+
 // Keyboard open/close resizes the layout — keep the live tail in view.
+// Only re-fit the herdr runtime when the keyboard is CLOSED (height near max):
+// resizing the agent's PTY on every keyboard toggle causes redraw churn.
+let fitTimer = null;
 window.addEventListener('resize', () => {
   if (!histMode) term.scrollTop = term.scrollHeight;
+  maxInnerH = Math.max(maxInnerH, window.innerHeight);
+  if (window.innerHeight >= maxInnerH * 0.85) {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(sendFit, 500);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -380,6 +407,7 @@ function connect() {
     wsOk = true;
     $('conn').classList.add('ok');
     if (activePane) send({ type: 'watch', pane: activePane });
+    setTimeout(sendFit, 50); // after layout settles
   };
   ws.onclose = () => {
     wsOk = false;
@@ -427,14 +455,8 @@ const msg = $('msg');
 
 function sendMessage() {
   if (!activePane) return;
-  const text = msg.value;
-  if (text) {
-    send({ type: 'input', pane: activePane, text });
-    // Small gap so TUIs register text before Enter (CC pattern).
-    setTimeout(() => send({ type: 'key', pane: activePane, keys: ['enter'] }), 120);
-  } else {
-    send({ type: 'key', pane: activePane, keys: ['enter'] });
-  }
+  // Single atomic text+Enter submit — two requests race (Enter swallowed).
+  send({ type: 'submit', pane: activePane, text: msg.value });
   msg.value = '';
   msg.style.height = 'auto';
   showLive();
