@@ -84,6 +84,7 @@
     font-family: 'Cascadia Mono', 'Roboto Mono', ui-monospace, monospace;
     padding: 6px 4px; overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+    overflow-anchor: none; /* we manage scroll position explicitly */
   }
   #term .row { white-space: pre; line-height: 1.25; min-height: 1.25em; }
   #term .row span { white-space: pre; }
@@ -231,9 +232,17 @@ const term = $('term'), tabsEl = $('tabs'), histBadge = $('histbadge'), emptyEl 
 let ws = null, wsOk = false;
 let sessions = [];          // from server
 let activePane = localStorage.getItem('herdr-web-pane') || null;
-let histMode = false;       // true = frozen scrollback view
 let liveRows = [];          // last live screen rows
+let lastRecent = null;      // last scrollback fetch — rendered ABOVE the live block
+let atBottom = true;        // view pinned to the live tail
 let fontSize = +(localStorage.getItem('herdr-web-font') || 0); // 0 = auto
+
+// One scroll container, two blocks: prefetched history above, live screen
+// below. Scrolling into history is plain native scrolling — zero fetches on
+// gesture (the fetch-on-swipe design stalled visibly on the phone).
+const histEl = document.createElement('div');
+const liveEl = document.createElement('div');
+term.append(histEl, liveEl);
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -261,10 +270,10 @@ function renderRow(spans) {
   return div;
 }
 
-function renderRows(rows) {
+function renderInto(el, rows) {
   const frag = document.createDocumentFragment();
   for (const r of rows) frag.appendChild(renderRow(r));
-  term.replaceChildren(frag);
+  el.replaceChildren(frag);
 }
 
 function fitFont(rows) {
@@ -281,62 +290,77 @@ function fitFont(rows) {
   term.style.fontSize = Math.max(7, Math.min(16, px)) + 'px';
 }
 
-function showLive() {
-  histMode = false;
+function scrollToLive() {
+  term.scrollTo({ top: term.scrollHeight, behavior: 'smooth' });
+}
+function pinBottom() { term.scrollTop = term.scrollHeight; }
+function jumpLive() { // instant re-pin (used after sending input)
+  atBottom = true;
   histBadge.classList.remove('show');
-  renderRows(liveRows);
-  term.scrollTop = term.scrollHeight;
+  renderHist();
+  pinBottom();
+}
+
+function rowText(spans) {
+  let t = '';
+  for (const s of spans) t += s.t;
+  return t.replace(/\s+$/, '');
+}
+
+// `recent` reads include the current screen at their tail; strip the part
+// that overlaps the live block so the junction doesn't duplicate lines.
+// Anchor on the TOP of the live screen (first non-empty lines) rather than
+// suffix-matching the whole screen — lines below the top (spinners, timers)
+// change between the two reads and a full-suffix match then under-cuts.
+function cutOverlap(recentRows, live) {
+  if (!live.length) return recentRows;
+  const rt = recentRows.map(rowText), lt = live.map(rowText);
+  const s = lt.findIndex((t) => t !== '');
+  if (s < 0) return recentRows;
+  const anchor = lt.slice(s, Math.min(s + 3, lt.length));
+  for (let i = rt.length - anchor.length; i >= 0; i--) {
+    let ok = true;
+    for (let j = 0; j < anchor.length; j++) {
+      if (rt[i + j] !== anchor[j]) { ok = false; break; }
+    }
+    if (ok) return recentRows.slice(0, Math.max(0, i - s));
+  }
+  return recentRows;
+}
+
+// History refreshes ONLY while pinned at bottom — a frozen history block is
+// what keeps the reading position rock-stable while scrolled up.
+function renderHist() {
+  if (!atBottom || !lastRecent) return;
+  renderInto(histEl, cutOverlap(lastRecent, liveRows));
+  pinBottom();
+}
+
+let histFetchTimer = null;
+function fetchHistSoon(delay = 1500) {
+  if (histFetchTimer) return;
+  histFetchTimer = setTimeout(() => {
+    histFetchTimer = null;
+    if (activePane && atBottom) send({ type: 'scrollback', pane: activePane, lines: 500 });
+  }, delay);
 }
 
 function onScreen(rows) {
   liveRows = rows;
-  if (!histMode) {
-    renderRows(rows);
-    fitFont(rows);
-    term.scrollTop = term.scrollHeight;
-  }
+  renderInto(liveEl, rows);
+  fitFont(rows);
+  if (atBottom) pinBottom();
+  fetchHistSoon(); // keep the junction fresh as lines scroll out of the screen
 }
 
-// Scroll-up at top => load history; scrolling back to the bottom (or the
-// badge) returns to live. Without the auto-exit the view silently freezes
-// on a history snapshot — looked "stuck" in real phone use.
 term.addEventListener('scroll', () => {
-  if (!activePane) return;
-  if (histMode) {
-    if (term.scrollTop + term.clientHeight >= term.scrollHeight - 8) showLive();
-    return;
-  }
-  if (term.scrollTop === 0 && term.scrollHeight <= term.clientHeight + 4) return;
-  if (term.scrollTop < 10 && term.scrollHeight > term.clientHeight) {
-    // At top of the (short) live screen: user wants history.
-    enterHistory();
-  }
+  const nowAtBottom = term.scrollTop + term.clientHeight >= term.scrollHeight - 8;
+  if (nowAtBottom === atBottom) return;
+  atBottom = nowAtBottom;
+  histBadge.classList.toggle('show', !atBottom);
+  if (atBottom) { renderHist(); fetchHistSoon(200); }
 });
-// Swipe-down gesture opens history. Must use TOUCH events, not pointer:
-// Android Chrome fires pointercancel one move into any touch drag (browser
-// claims the gesture), but touchmove keeps streaming (verified on emulator).
-// touch-action stays default so native div scrolling works in history mode.
-let touchStartY = null;
-term.addEventListener('touchstart', (e) => { touchStartY = e.touches[0]?.clientY ?? null; }, { passive: true });
-term.addEventListener('touchmove', (e) => {
-  if (touchStartY == null || histMode || !activePane) return;
-  const y = e.touches[0]?.clientY ?? touchStartY;
-  if (y - touchStartY > 60 && term.scrollTop === 0) {
-    touchStartY = null;
-    enterHistory();
-  }
-}, { passive: true });
-term.addEventListener('touchend', () => { touchStartY = null; });
-// Desktop: wheel-up at top opens history too.
-term.addEventListener('wheel', (e) => {
-  if (!histMode && activePane && e.deltaY < 0 && term.scrollTop === 0) enterHistory();
-}, { passive: true });
-function enterHistory() {
-  histMode = true;
-  histBadge.classList.add('show');
-  send({ type: 'scrollback', pane: activePane, lines: 500 });
-}
-histBadge.addEventListener('click', showLive);
+histBadge.addEventListener('click', scrollToLive);
 
 // ---------------------------------------------------------------------------
 // Viewport fit -> drive the herdr runtime size (tmux-web-style readable width)
@@ -362,7 +386,7 @@ function sendFit() {
 // resizing the agent's PTY on every keyboard toggle causes redraw churn.
 let fitTimer = null;
 window.addEventListener('resize', () => {
-  if (!histMode) term.scrollTop = term.scrollHeight;
+  if (atBottom) pinBottom();
   maxInnerH = Math.max(maxInnerH, window.innerHeight);
   if (window.innerHeight >= maxInnerH * 0.85) {
     clearTimeout(fitTimer);
@@ -505,12 +529,17 @@ function selectPane(paneId) {
   if (paneId) markSeen(paneId);
   maybeAskNotifPermission();
   localStorage.setItem('herdr-web-pane', paneId || '');
-  histMode = false;
+  atBottom = true;
   histBadge.classList.remove('show');
   liveRows = [];
-  term.replaceChildren();
+  lastRecent = null;
+  histEl.replaceChildren();
+  liveEl.replaceChildren();
   renderTabs();
-  if (wsOk && paneId) send({ type: 'watch', pane: paneId });
+  if (wsOk && paneId) {
+    send({ type: 'watch', pane: paneId });
+    send({ type: 'scrollback', pane: paneId, lines: 500 }); // prefetch history
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +553,10 @@ function connect() {
   ws.onopen = () => {
     wsOk = true;
     $('conn').classList.add('ok');
-    if (activePane) send({ type: 'watch', pane: activePane });
+    if (activePane) {
+      send({ type: 'watch', pane: activePane });
+      send({ type: 'scrollback', pane: activePane, lines: 500 }); // prefetch
+    }
     setTimeout(sendFit, 50); // after layout settles
   };
   ws.onclose = () => {
@@ -547,11 +579,9 @@ function connect() {
         if (m.pane === activePane) onScreen(m.rows);
         break;
       case 'scrollback':
-        if (m.pane === activePane && histMode) {
-          renderRows(m.rows);
-          // Just above the bottom: most recent lines visible, but not AT the
-          // bottom — that would instantly re-trigger the auto-exit-to-live.
-          term.scrollTop = Math.max(0, term.scrollHeight - term.clientHeight - 80);
+        if (m.pane === activePane) {
+          lastRecent = m.rows;
+          renderHist(); // no-op while scrolled up — keeps reading position stable
         }
         break;
       case 'agent_status': {
@@ -583,7 +613,7 @@ function sendMessage() {
   send({ type: 'submit', pane: activePane, text: msg.value });
   msg.value = '';
   msg.style.height = 'auto';
-  showLive();
+  jumpLive();
 }
 
 $('send').addEventListener('mousedown', (e) => e.preventDefault());
@@ -611,7 +641,7 @@ for (const [label, keys] of QUICK_KEYS) {
   b.addEventListener('click', () => {
     if (!activePane) return;
     send({ type: 'key', pane: activePane, keys });
-    showLive();
+    jumpLive();
   });
   qkEl.appendChild(b);
 }
@@ -648,7 +678,7 @@ $('ns-create').addEventListener('click', async () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     if (activePane) markSeen(activePane);
-    if (!histMode) term.scrollTop = term.scrollHeight;
+    if (atBottom) pinBottom();
   }
 });
 
