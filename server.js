@@ -250,7 +250,12 @@ wss.on('connection', (ws) => {
         case 'watch': {
           if (watched) unwatchPane(watched, ws);
           watched = msg.pane;
-          if (watched) watchPane(watched, ws);
+          if (watched) {
+            watchPane(watched, ws);
+            // Mark seen on herdr's side too: its done/seen state follows the
+            // phantom TUI client's focus, so focus what the web user views.
+            herdr.request('agent.focus', { target: watched }).catch(() => {});
+          }
           break;
         }
         case 'input': { // literal text

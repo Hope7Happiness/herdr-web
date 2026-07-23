@@ -63,6 +63,19 @@
   }
   #conn { width: 8px; height: 8px; border-radius: 50%; background: #f85149; flex: none; margin-left: 2px; }
   #conn.ok { background: var(--st-working); animation: none; }
+  #attn {
+    flex: none; align-items: center; gap: 5px; padding: 6px 10px; cursor: pointer;
+    border-radius: 8px; background: var(--bg3); border: 1px solid var(--st-done);
+    color: var(--st-done); font-size: 13px; font-weight: 600; user-select: none;
+  }
+  #attn.blocked { border-color: var(--st-blocked); color: var(--st-blocked); animation: pulse 1s ease-in-out infinite; }
+  #toast {
+    position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 30;
+    background: var(--bg3); border: 1px solid var(--border); border-left: 4px solid var(--st-blocked);
+    border-radius: 10px; padding: 10px 16px; font-size: 14px; display: none;
+    max-width: 90vw; box-shadow: 0 4px 14px rgba(0,0,0,.5); cursor: pointer;
+  }
+  #toast.show { display: block; }
 
   /* ---- terminal ---- */
   #termwrap { flex: 1; min-height: 0; position: relative; background: var(--bg); }
@@ -139,6 +152,10 @@
 <body>
   <div id="tabbar">
     <div id="conn" title="connection"></div>
+    <div id="attn" title="Next agent needing attention" style="display:none;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      <span>0</span>
+    </div>
     <div id="tabs" style="display:flex;gap:6px;"></div>
     <div class="tab-btn" id="newbtn" title="New session">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -163,6 +180,8 @@
       </button>
     </div>
   </div>
+
+  <div id="toast"></div>
 
   <div id="sheet">
     <div class="panel">
@@ -278,15 +297,19 @@ function onScreen(rows) {
   }
 }
 
-// Scroll-up at top => load history; badge returns to live.
+// Scroll-up at top => load history; scrolling back to the bottom (or the
+// badge) returns to live. Without the auto-exit the view silently freezes
+// on a history snapshot — looked "stuck" in real phone use.
 term.addEventListener('scroll', () => {
   if (!activePane) return;
-  if (!histMode && term.scrollTop === 0 && term.scrollHeight <= term.clientHeight + 4) return;
-  if (!histMode && term.scrollTop < 10 && term.scrollHeight > term.clientHeight) {
+  if (histMode) {
+    if (term.scrollTop + term.clientHeight >= term.scrollHeight - 8) showLive();
+    return;
+  }
+  if (term.scrollTop === 0 && term.scrollHeight <= term.clientHeight + 4) return;
+  if (term.scrollTop < 10 && term.scrollHeight > term.clientHeight) {
     // At top of the (short) live screen: user wants history.
-    histMode = true;
-    histBadge.classList.add('show');
-    send({ type: 'scrollback', pane: activePane, lines: 500 });
+    enterHistory();
   }
 });
 // Swipe-down gesture opens history. Must use TOUCH events, not pointer:
@@ -350,42 +373,137 @@ window.addEventListener('resize', () => {
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
+// Attention model (mirrors herdr's agent panel semantics): "done" = finished
+// while you weren't looking, cleared when you view the pane; blocked always
+// needs you. Tabs sort by attention, like herdr's attention-ordered sidebar.
+const unseenDone = new Set(JSON.parse(localStorage.getItem('herdr-web-unseen') || '[]'));
+function saveUnseen() { localStorage.setItem('herdr-web-unseen', JSON.stringify([...unseenDone])); }
+function effectiveStatus(p) {
+  if (p.agent_status === 'blocked') return 'blocked';
+  if (unseenDone.has(p.pane_id)) return 'done';
+  return p.agent_status || 'unknown';
+}
+const ATTN_ORDER = { blocked: 0, done: 1, working: 2, idle: 3, unknown: 4 };
+function attentionPanes() {
+  return paneEntries().filter(({ p }) => {
+    const s = effectiveStatus(p);
+    return s === 'blocked' || s === 'done';
+  });
+}
+function markSeen(paneId) {
+  if (unseenDone.delete(paneId)) { saveUnseen(); renderTabs(); }
+}
+
 function paneEntries() {
   const out = [];
   for (const w of sessions) for (const p of w.panes) out.push({ w, p });
+  out.sort((a, b) => (ATTN_ORDER[effectiveStatus(a.p)] ?? 9) - (ATTN_ORDER[effectiveStatus(b.p)] ?? 9));
   return out;
 }
 
 function renderTabs() {
   const frag = document.createDocumentFragment();
   for (const { w, p } of paneEntries()) {
+    const st = effectiveStatus(p);
     const tab = document.createElement('div');
     tab.className = 'tab' + (p.pane_id === activePane ? ' active' : '');
     tab.dataset.pane = p.pane_id;
     const dot = document.createElement('div');
-    dot.className = 'dot ' + (p.agent_status || 'unknown');
+    dot.className = 'dot ' + st;
     const txt = document.createElement('div');
     txt.className = 'txt';
     const lbl = document.createElement('div');
     lbl.className = 'lbl';
     lbl.textContent = p.agent ? `${p.agent} · ${w.label}` : w.label;
     txt.appendChild(lbl);
-    if (p.title) {
-      const sub = document.createElement('div');
-      sub.className = 'sub';
-      sub.textContent = p.title;
-      txt.appendChild(sub);
-    }
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = st === 'blocked' ? 'needs input' : st === 'done' ? 'done — unseen' : (p.title || '');
+    if (sub.textContent) txt.appendChild(sub);
     tab.append(dot, txt);
     tab.addEventListener('click', () => selectPane(p.pane_id));
     frag.appendChild(tab);
   }
   tabsEl.replaceChildren(frag);
+  renderAttnChip();
   emptyEl.style.display = activePane ? 'none' : 'flex';
 }
 
+// Attention chip: count + one-tap jump to the next agent needing you
+// (herdr's next-agent navigation, phone-sized).
+function renderAttnChip() {
+  const chip = $('attn');
+  const panes = attentionPanes();
+  if (!panes.length) { chip.style.display = 'none'; return; }
+  chip.style.display = 'flex';
+  chip.querySelector('span').textContent = panes.length;
+  chip.classList.toggle('blocked', panes.some(({ p }) => effectiveStatus(p) === 'blocked'));
+}
+$('attn').addEventListener('click', () => {
+  const panes = attentionPanes();
+  if (!panes.length) return;
+  const ids = panes.map(({ p }) => p.pane_id);
+  const next = ids[(ids.indexOf(activePane) + 1) % ids.length];
+  selectPane(next);
+});
+
+// ---------------------------------------------------------------------------
+// Attention notifications — the herdr thing people love: a blocked approval
+// request never idles unnoticed in the background.
+// ---------------------------------------------------------------------------
+function paneName(p, w) {
+  return (p.agent ? `${p.agent} · ` : '') + w.label;
+}
+function onStatusTransition(p, w, prev, next) {
+  const viewing = p.pane_id === activePane && document.visibilityState === 'visible' && !document.hidden;
+  if (next === 'blocked') {
+    notifyAttention(p, w, 'needs your input', true);
+  } else if (prev === 'working' && (next === 'idle' || next === 'done') && !viewing) {
+    // herdr emits 'done' natively when ITS focus isn't on the pane; for the
+    // pane the phantom client focuses it emits 'idle' — track those locally.
+    if (next === 'idle') { unseenDone.add(p.pane_id); saveUnseen(); }
+    notifyAttention(p, w, 'finished', false);
+  }
+}
+function notifyAttention(p, w, what, urgent) {
+  const title = `${paneName(p, w)} ${what}`;
+  if (document.visibilityState === 'visible') {
+    if (p.pane_id !== activePane || what !== 'needs your input') showToast(title, p.pane_id, urgent);
+  } else if (Notification.permission === 'granted') {
+    navigator.serviceWorker?.ready.then((reg) => reg.showNotification('herdr-web', {
+      body: title, tag: `herdr-${p.pane_id}`, data: { pane: p.pane_id },
+      icon: 'icon-192.png', badge: 'icon-192.png',
+    })).catch(() => {});
+  }
+}
+let toastTimer = null, toastPane = null;
+function showToast(text, paneId, urgent) {
+  const t = $('toast');
+  t.textContent = text;
+  t.style.borderLeftColor = urgent ? 'var(--st-blocked)' : 'var(--st-done)';
+  t.classList.add('show');
+  toastPane = paneId;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 5000);
+}
+$('toast').addEventListener('click', () => {
+  $('toast').classList.remove('show');
+  if (toastPane) selectPane(toastPane);
+});
+// System notifications need permission from a user gesture; ask lazily on
+// pane taps until answered (no latch — a suppressed prompt would eat it).
+function maybeAskNotifPermission() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return;
+  Notification.requestPermission().catch(() => {});
+}
+navigator.serviceWorker?.addEventListener('message', (e) => {
+  if (e.data?.pane) selectPane(e.data.pane);
+});
+
 function selectPane(paneId) {
   activePane = paneId;
+  if (paneId) markSeen(paneId);
+  maybeAskNotifPermission();
   localStorage.setItem('herdr-web-pane', paneId || '');
   histMode = false;
   histBadge.classList.remove('show');
@@ -431,12 +549,18 @@ function connect() {
       case 'scrollback':
         if (m.pane === activePane && histMode) {
           renderRows(m.rows);
-          term.scrollTop = term.scrollHeight; // bottom of history = most recent
+          // Just above the bottom: most recent lines visible, but not AT the
+          // bottom — that would instantly re-trigger the auto-exit-to-live.
+          term.scrollTop = Math.max(0, term.scrollHeight - term.clientHeight - 80);
         }
         break;
       case 'agent_status': {
-        for (const w of sessions) for (const p of w.panes)
-          if (p.pane_id === m.pane_id) p.agent_status = m.agent_status;
+        for (const w of sessions) for (const p of w.panes) {
+          if (p.pane_id !== m.pane_id) continue;
+          const prev = p.agent_status;
+          p.agent_status = m.agent_status;
+          onStatusTransition(p, w, prev, m.agent_status);
+        }
         renderTabs();
         break;
       }
@@ -518,6 +642,14 @@ $('ns-create').addEventListener('click', async () => {
   const data = await res.json();
   $('sheet').classList.remove('show');
   if (data.root_pane) selectPane(data.root_pane.pane_id);
+});
+
+// Returning to the app while viewing a finished pane counts as seeing it.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (activePane) markSeen(activePane);
+    if (!histMode) term.scrollTop = term.scrollHeight;
+  }
 });
 
 // PWA service worker
