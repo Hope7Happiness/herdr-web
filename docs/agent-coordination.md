@@ -28,13 +28,7 @@ herdr agent read helper --source recent-unwrapped --lines 60
 …and reported: *"Done. Helper replied with exactly: BAAA-CONFIRMED."*
 
 Both named agents appear as tabs in the web UI, switchable mid-exchange —
-main's view on the left, helper's pane (with the prompt main sent it) on
-the right:
-
-<p>
-  <img src="verification/emu4-02-main.png" width="270" alt="main's coordination report">
-  <img src="verification/emu4-03-helper.png" width="270" alt="helper's pane with the reply">
-</p>
+you can watch main drive and helper answer from your phone.
 
 ## Notes
 

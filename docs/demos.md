@@ -44,11 +44,10 @@ https://github.com/user-attachments/assets/3c0c76d5-46aa-4233-ba97-aa3d0c3ff662
 
 ### Background system notification
 
-With the app backgrounded (HTTPS origin + granted permission), a blocked
-agent raises a real Android notification. Tapping it brings the app back
-with the attention state waiting.
-
-https://github.com/user-attachments/assets/6df25b84-8a44-4cfe-af99-aeed02b76699
+With the app backgrounded (HTTPS origin + granted notification permission),
+a blocked agent raises a real system notification; tapping it brings the
+app back with the attention state waiting. (No clip for this one — the
+notification shade displays the serving hostname, which we keep private.)
 
 ### Create a session
 
