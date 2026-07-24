@@ -1,63 +1,116 @@
 # herdr-web
 
 Mobile-first web UI for the [herdr](https://herdr.dev) agent multiplexer —
-view and drive coding-agent sessions (Claude Code first) from a phone
-browser, backed by herdr's persistent PTY sessions and its semantic agent
-state (idle / working / blocked / done).
+view and drive your coding agents (Claude Code first) from a phone browser,
+backed by herdr's persistent PTY sessions and its semantic agent states
+(idle / working / blocked / done).
 
-Exploration sibling of tmux-web: herdr replaces tmux as the backend, so
-there's no `tmux -C` bridge and no xterm emulation anywhere in the stack —
-herdr's socket API serves the screen matrix as SGR-styled text and the
-server parses it into styled row spans for native-DOM rendering.
+<p align="center">
+  <img src="docs/media/live-agent.gif" width="270" alt="Prompting a Claude Code agent from a phone">
+  <img src="docs/media/attention-blocked.gif" width="270" alt="Blocked agent toast and jump">
+</p>
 
-## Run
+**More demos (mobile + desktop videos): [docs/demos.md](docs/demos.md)** ·
+Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordination.md)
 
-```bash
-node server.js          # port 7930 (HERDR_WEB_PORT to override)
-```
+## What you get
 
-Starts (or reuses) a headless `herdr server` automatically. Open
-`http://localhost:7930`. From the Android emulator: `http://10.0.2.2:7930`.
+- **Live terminal view** of any herdr pane, rendered as native DOM rows at a
+  phone-readable width — herdr's runtime is resized to fit your screen, so
+  Claude Code *reflows* to ~50 columns instead of squinting at 80.
+- **Agent-status tabs** — herdr's killer feature, front and center: one tab
+  per pane with a colored state dot (working / blocked / done / idle),
+  sorted by attention.
+- **Never miss an approval**: blocked agents raise a toast in-app and a
+  system notification when the app is in the background; a bell chip cycles
+  you through everything that needs you. "Done while you weren't looking"
+  is tracked as unseen until you view it (synced with herdr's own seen state).
+- **Smooth scrollback** — history is prefetched above the live screen in one
+  scroll container; swiping into the past is plain native scrolling.
+- **Quick keys + input** — Esc, Tab, ⇧Tab, Ctrl-C, arrows, Enter; text
+  submits atomically via herdr's `agent.prompt` (no half-pasted prompts).
+- **PWA** — installable, no build step, three runtime dependencies.
 
-## Architecture
+## Install
 
-```
-phone browser <-> HTTP/WS (Express+ws, :7930) <-> ~/.config/herdr/herdr.sock (JSON API)
-```
-
-- `server.js` — thin bridge. Sessions/agents from `session.snapshot` +
-  lifecycle event subscriptions; live view polls `pane.read visible/ansi`
-  (300ms, only for the watched pane) with `pane.scroll_changed` as an
-  immediate-read hint; `pane.agent_status_changed` pushes status dots in
-  real time; input via `pane.send_text` / `pane.send_keys`.
-- `lib/ansi.js` — per-line SGR → span parser (herdr emits no cursor
-  escapes; see `docs/socket-api-notes.md` for the full API recon).
-- `public/index.html` — single-page vanilla JS PWA: tab bar with
-  agent-status dots, native-DOM row terminal (auto font-fit), swipe-down
-  history mode, quick keys, textarea input.
-
-## Key findings / decisions
-
-Read `docs/socket-api-notes.md` before touching the bridge — it maps what
-herdr's socket API can and cannot do (no output-stream subscription; why
-polling; the 80×24 headless size constraint and the sidebar-collapse
-config in `~/.config/herdr/config.toml`).
-
-Mobile gotchas encoded in the UI (verified on the Android emulator,
-evidence in `docs/verification/`):
-
-- `interactive-widget=resizes-content` in the viewport meta — without it
-  the keyboard pans the page and hides the terminal.
-- The swipe-down-for-history gesture listens to **touch** events, not
-  pointer events — Android Chrome fires `pointercancel` one move into any
-  drag, but `touchmove` keeps streaming.
-
-## Verify
+### As a herdr plugin
 
 ```bash
-node scripts/_smoke-screenshot.mjs   # desktop smoke @ phone viewport (needs playwright)
+herdr plugin install eyalev/herdr-web
 ```
 
-Android emulator flow (Phase 3 of PLAN.md): launch TestPhone2, open
-`http://10.0.2.2:7930` in Chrome, drive via adb input, screenshot via
-`adb exec-out screencap -p`.
+The plugin's startup hook launches the bridge on `http://127.0.0.1:7930`
+whenever herdr starts (and there are Start/Stop actions in herdr's UI).
+
+### Standalone
+
+```bash
+git clone https://github.com/eyalev/herdr-web
+cd herdr-web && npm install
+node server.js        # http://127.0.0.1:7930
+```
+
+Requires Node 18+, a running (or startable) herdr ≥ 0.7. `node-pty` is an
+optional dependency — without it everything works, but the terminal stays at
+herdr's 80×24 headless default instead of fitting your phone.
+
+## Reaching it from your phone
+
+The server deliberately binds `127.0.0.1` only — **it grants full terminal
+control of every pane with no auth**. Expose it through something that
+handles transport security for you:
+
+- **Tailscale** (recommended): `tailscale serve --bg --https=17930 http://127.0.0.1:7930`
+  then open `https://<machine>.<tailnet>.ts.net:17930` on your phone.
+  HTTPS also unlocks notifications and PWA install.
+- Any authenticated reverse proxy works the same way.
+- `HERDR_WEB_BIND=0.0.0.0` exists if you really know what you're doing.
+
+## How it works
+
+```
+phone browser ⇄ HTTP/WS (Express+ws, :7930) ⇄ ~/.config/herdr/herdr.sock (JSON API)
+```
+
+herdr's server owns the PTYs and already runs a full terminal emulator, so
+there is **no xterm and no escape-sequence parsing pipeline here**: the
+bridge polls `pane.read {source: "visible", format: "ansi"}` for the pane
+you're viewing (300 ms, plus `pane.scroll_changed` events for snappiness),
+parses the SGR-only styled lines into spans (~100 lines of code), and ships
+them over a WebSocket. Background panes cost nothing — their status dots
+come from pushed `pane.agent_status_changed` events.
+
+The one clever bit: the JSON API can't resize the headless runtime, but the
+runtime follows the foreground *client's* terminal size — so the bridge
+keeps a real `herdr` TUI client in a hidden pty and resizes it to whatever
+your browser reports. That's what makes agents reflow to phone width.
+
+The full empirical API recon that shaped this design:
+[docs/socket-api-notes.md](docs/socket-api-notes.md).
+
+## Configuration
+
+| Env var | Default | |
+|---|---|---|
+| `HERDR_WEB_PORT` | `7930` | HTTP/WS port |
+| `HERDR_WEB_BIND` | `127.0.0.1` | Listen address |
+| `HERDR_SOCKET_PATH` | `~/.config/herdr/herdr.sock` | herdr API socket |
+
+Recommended herdr config (`~/.config/herdr/config.toml`) so headless panes
+get full width:
+
+```toml
+[ui]
+sidebar_start_collapsed = true
+sidebar_collapsed_mode = "hidden"
+```
+
+## Status
+
+Early but real — built and verified against herdr 0.7.5 (protocol 17) with
+emulator-tested UX (see [docs/demos.md](docs/demos.md) for the evidence).
+Expect herdr's pre-1.0 API to move. Issues and PRs welcome.
+
+## License
+
+MIT

@@ -15,6 +15,10 @@ const sizeDriver = new SizeDriver();
 // Deliberately NOT process.env.PORT — that leaks from parent shells (bit us:
 // inherited PORT=7681 = tmux-web's port).
 const PORT = Number(process.env.HERDR_WEB_PORT || 7930);
+// SECURITY: this server grants full terminal control of every herdr pane with
+// no auth. Default to loopback only; expose deliberately via tailscale serve /
+// a reverse proxy, or set HERDR_WEB_BIND=0.0.0.0 if you know what you're doing.
+const BIND = process.env.HERDR_WEB_BIND || '127.0.0.1';
 const POLL_MS = 300;
 
 function jlog(level, event, extra = {}) {
@@ -318,7 +322,7 @@ wss.on('connection', (ws) => {
   const pong = await herdr.ensureServer();
   jlog('info', 'herdr-ready', { version: pong.version, protocol: pong.protocol });
   await refreshSnapshot('startup');
-  server.listen(PORT, () => jlog('info', 'listening', { port: PORT }));
+  server.listen(PORT, BIND, () => jlog('info', 'listening', { port: PORT, bind: BIND }));
 })().catch((e) => {
   jlog('error', 'startup-failed', { error: e.message });
   process.exit(1);

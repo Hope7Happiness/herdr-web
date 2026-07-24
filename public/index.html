@@ -30,13 +30,15 @@
   }
 
   /* ---- tab bar ---- */
+  /* Tabs scroll in their own strip; conn dot, bell, and + stay pinned. */
   #tabbar {
     display: flex; gap: 6px; padding: 8px 8px 6px;
-    overflow-x: auto; flex: none; scrollbar-width: none;
+    overflow: hidden; flex: none;
     border-bottom: 1px solid var(--border); background: var(--bg2);
     align-items: center;
   }
-  #tabbar::-webkit-scrollbar { display: none; }
+  #tabs { overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: none; }
+  #tabs::-webkit-scrollbar { display: none; }
   .tab {
     display: flex; align-items: center; gap: 7px;
     padding: 7px 12px; border-radius: 8px; flex: none;
@@ -668,7 +670,10 @@ $('ns-create').addEventListener('click', async () => {
   });
   const data = await res.json();
   $('sheet').classList.remove('show');
-  if (data.root_pane) selectPane(data.root_pane.pane_id);
+  if (data.root_pane) {
+    for (const id of ['ns-cwd', 'ns-label', 'ns-cmd']) $(id).value = '';
+    selectPane(data.root_pane.pane_id);
+  }
 });
 
 // Returning to the app while viewing a finished pane counts as seeing it.

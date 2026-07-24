@@ -1,0 +1,26 @@
+id = "eyalev.herdr-web"
+name = "herdr-web"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Mobile-first web UI: drive your agents from a phone browser"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["npm", "install", "--no-fund", "--no-audit"]
+
+# Startup hooks are one-shot (not supervised daemons) — this one ensures the
+# bridge server is running and exits. See scripts/plugin-start.sh.
+[[startup]]
+command = ["bash", "scripts/plugin-start.sh"]
+
+[[actions]]
+id = "start"
+title = "Start herdr-web server"
+contexts = ["workspace"]
+command = ["bash", "scripts/plugin-start.sh"]
+
+[[actions]]
+id = "stop"
+title = "Stop herdr-web server"
+contexts = ["workspace"]
+command = ["bash", "scripts/plugin-stop.sh"]
