@@ -9,7 +9,7 @@ NAME="$1"; SECS="${2:-30}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$ROOT/docs/media"
 
-adb shell "screenrecord --bit-rate 6000000 --time-limit $((SECS + 2)) /sdcard/demo.mp4" &
+adb shell "screenrecord --bit-rate 12000000 --time-limit $((SECS + 2)) /sdcard/demo.mp4" &
 REC_PID=$!
 sleep "$SECS"
 adb shell pkill -INT screenrecord 2>/dev/null || true

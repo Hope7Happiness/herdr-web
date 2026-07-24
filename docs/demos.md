@@ -13,7 +13,7 @@ Type to a Claude Code session and watch the response stream into the live
 terminal view. The tab dot pulses green while the agent works, and the tab
 subtitle tracks the agent's own task title.
 
-https://github.com/user-attachments/assets/98deef58-db80-414e-84ca-855680f65608
+https://github.com/user-attachments/assets/a687a81a-8baf-497e-88e1-a6a8ff273e46
 
 ### Smooth scrollback
 
@@ -22,7 +22,7 @@ swiping into the past is plain native scrolling with fling momentum, no
 mode switch, no fetch stall. The **↓ Live** chip lights up while you're in
 history; tapping it (or scrolling back down) returns to the live tail.
 
-https://github.com/user-attachments/assets/d9f0489b-e2f0-4c3c-90d5-effff4086075
+https://github.com/user-attachments/assets/b4fadeb8-de0d-4c54-b18d-ca8adda2f703
 
 ### Blocked agent → toast → jump
 

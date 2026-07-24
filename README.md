@@ -7,7 +7,7 @@ backed by herdr's persistent PTY sessions and its semantic agent states
 
 Prompting a live Claude Code agent from a phone:
 
-https://github.com/user-attachments/assets/98deef58-db80-414e-84ca-855680f65608
+https://github.com/user-attachments/assets/a687a81a-8baf-497e-88e1-a6a8ff273e46
 
 **More demos (mobile + desktop videos): [docs/demos.md](docs/demos.md)** ·
 Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordination.md)
@@ -68,7 +68,14 @@ handles transport security for you:
 ## How it works
 
 ```
-phone browser ⇄ HTTP/WS (Express+ws, :7930) ⇄ ~/.config/herdr/herdr.sock (JSON API)
+ phone browser (PWA)
+   │ ▲ screens/agent-states (WebSocket) · keys, prompts (WS/HTTP)
+   ▼ │
+ herdr-web bridge :7930
+   server.js ── lib/ansi.js (ANSI → grid)
+   │            lib/size-driver.js (fit-to-phone resize)
+   ▼  JSON socket (session.snapshot, events, agent.prompt, keys)
+ herdr daemon ──▶ PTY panes (Claude Code agents, …)
 ```
 
 herdr's server owns the PTYs and already runs a full terminal emulator, so

@@ -92,6 +92,10 @@
   #term .row span { white-space: pre; }
   .b { font-weight: 700; } .dim2 { opacity: 0.6; } .i { font-style: italic; }
   .u { text-decoration: underline; } .st { text-decoration: line-through; }
+  /* Fixed-width cells for glyphs with font-dependent advance (spinner
+     dingbats, symbols) — stops lines jumping as CC's spinner cycles. */
+  #term .g { display: inline-block; width: 1ch; text-align: center; overflow: hidden; vertical-align: bottom; }
+  #term .g2 { width: 2ch; }
   /* Always visible so the keys row never shifts; greyed when already live. */
   #livekey { color: var(--fg-dim); opacity: 0.55; }
   #livekey.show { color: var(--accent); border-color: var(--accent); opacity: 1; }
@@ -245,12 +249,42 @@ term.append(histEl, liveEl);
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
+// Glyphs the monospace font renders at exactly 1 cell: ASCII + box drawing
+// + block elements. Everything else (CC's spinner dingbats ✻✳✶, emoji,
+// symbols…) has font-dependent width — as the spinner cycles glyphs, the
+// rest of the line visibly jumps left/right. Pin those chars into
+// fixed-width inline-block cells (1ch, or 2ch for East-Asian-wide/emoji).
+const MONO_SAFE = /^[\x20-\x7E─-▟]*$/;
+function charCells(cp) {
+  return (
+    (cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) ||
+    (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+    (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
+    (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1FAFF) ||
+    cp >= 0x20000
+  ) ? 2 : 1;
+}
+function appendGlyphAware(el, text) {
+  if (MONO_SAFE.test(text)) { el.appendChild(document.createTextNode(text)); return; }
+  let run = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    if (cp >= 0x20 && cp <= 0x7E || (cp >= 0x2500 && cp <= 0x259F)) { run += ch; continue; }
+    if (run) { el.appendChild(document.createTextNode(run)); run = ''; }
+    const g = document.createElement('span');
+    g.className = 'g' + (charCells(cp) === 2 ? ' g2' : '');
+    g.textContent = ch;
+    el.appendChild(g);
+  }
+  if (run) el.appendChild(document.createTextNode(run));
+}
+
 function renderRow(spans) {
   const div = document.createElement('div');
   div.className = 'row';
   for (const s of spans) {
     const el = document.createElement('span');
-    el.textContent = s.t;
+    appendGlyphAware(el, s.t);
     let fg = colorOf(s.f), bg = colorOf(s.g);
     if (s.m & 16) { const t = fg || '#e6edf3'; fg = bg || '#0d1117'; bg = t; }
     if (fg) el.style.color = fg;
@@ -612,6 +646,7 @@ function sendMessage() {
   send({ type: 'submit', pane: activePane, text: msg.value });
   msg.value = '';
   msg.style.height = 'auto';
+  msg.blur(); // drop the keyboard: show the full terminal while the agent works
   jumpLive();
 }
 
