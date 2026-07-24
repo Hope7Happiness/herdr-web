@@ -5,10 +5,9 @@ view and drive your coding agents (Claude Code first) from a phone browser,
 backed by herdr's persistent PTY sessions and its semantic agent states
 (idle / working / blocked / done).
 
-<p align="center">
-  <img src="docs/media/live-agent.gif" width="270" alt="Prompting a Claude Code agent from a phone">
-  <img src="docs/media/attention-blocked.gif" width="270" alt="Blocked agent toast and jump">
-</p>
+Prompting a live Claude Code agent from a phone:
+
+https://github.com/user-attachments/assets/98deef58-db80-414e-84ca-855680f65608
 
 **More demos (mobile + desktop videos): [docs/demos.md](docs/demos.md)** ·
 Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordination.md)

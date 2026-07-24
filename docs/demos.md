@@ -2,7 +2,8 @@
 
 All clips below were recorded on a real Android emulator (Pixel-class,
 1080×2400) driving the actual app over HTTPS, and on desktop Chromium.
-Each GIF has a full-quality MP4 next to it in [`docs/media/`](media/).
+Videos are hosted as GitHub attachments
+([#1](https://github.com/eyalev/herdr-web/issues/1)).
 
 ## Mobile
 
@@ -12,9 +13,7 @@ Type to a Claude Code session and watch the response stream into the live
 terminal view. The tab dot pulses green while the agent works, and the tab
 subtitle tracks the agent's own task title.
 
-<img src="media/live-agent.gif" width="300" alt="Live agent demo">
-
-[MP4](media/live-agent.mp4)
+https://github.com/user-attachments/assets/98deef58-db80-414e-84ca-855680f65608
 
 ### Smooth scrollback
 
@@ -23,9 +22,7 @@ swiping into the past is plain native scrolling with fling momentum, no
 mode switch, no fetch stall. The **↓ Live** chip lights up while you're in
 history; tapping it (or scrolling back down) returns to the live tail.
 
-<img src="media/smooth-scrollback.gif" width="300" alt="Smooth scrollback demo">
-
-[MP4](media/smooth-scrollback.mp4)
+https://github.com/user-attachments/assets/d9f0489b-e2f0-4c3c-90d5-effff4086075
 
 ### Blocked agent → toast → jump
 
@@ -34,9 +31,7 @@ hits an approval prompt → its dot turns orange, a toast slides in, and the
 bell chip starts pulsing. Tap the toast to jump straight to the blocked
 pane.
 
-<img src="media/attention-blocked.gif" width="300" alt="Blocked attention demo">
-
-[MP4](media/attention-blocked.mp4)
+https://github.com/user-attachments/assets/475602cb-81a1-4995-8f63-d2ffcdaa7f42
 
 ### Done while you weren't looking
 
@@ -45,9 +40,7 @@ dot) with a "finished" toast. The bell chip cycles you to the next agent
 needing attention; viewing the pane marks it seen — in the web UI *and* in
 herdr itself.
 
-<img src="media/attention-done.gif" width="300" alt="Done-unseen demo">
-
-[MP4](media/attention-done.mp4)
+https://github.com/user-attachments/assets/3c0c76d5-46aa-4233-ba97-aa3d0c3ff662
 
 ### Background system notification
 
@@ -55,9 +48,7 @@ With the app backgrounded (HTTPS origin + granted permission), a blocked
 agent raises a real Android notification. Tapping it brings the app back
 with the attention state waiting.
 
-<img src="media/background-notification.gif" width="300" alt="Background notification demo">
-
-[MP4](media/background-notification.mp4)
+https://github.com/user-attachments/assets/6df25b84-8a44-4cfe-af99-aeed02b76699
 
 ### Create a session
 
@@ -65,9 +56,7 @@ The **+** button opens a sheet: pick a working directory (and optionally a
 label/command), and the new pane appears as a tab — here a plain shell that
 we immediately type into.
 
-<img src="media/new-session.gif" width="300" alt="New session demo">
-
-[MP4](media/new-session.mp4)
+https://github.com/user-attachments/assets/88b75ea9-2777-4a02-a116-1b799fbc848b
 
 ## Desktop
 
@@ -75,6 +64,4 @@ The same single-page app at desktop size: the herdr runtime resizes to the
 bigger viewport, so the agent gets a wide terminal. Prompt, watch the
 response, wheel-scroll into history, hop between workspace tabs.
 
-<img src="media/desktop.gif" width="640" alt="Desktop demo">
-
-[MP4](media/desktop.mp4)
+https://github.com/user-attachments/assets/a9daeaf5-0bcc-4db5-b7f9-cc812884e083
