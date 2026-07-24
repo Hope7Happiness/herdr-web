@@ -20,12 +20,12 @@ await page.goto(URL + '?_t=' + Date.now(), { waitUntil: 'networkidle' });
 await page.waitForTimeout(2500);
 
 // Select the main agent tab
-await page.evaluate(() => selectPane('w3:p1'));
+await page.evaluate(() => selectPane('wA:p1'));
 await page.waitForTimeout(2000);
 
 // Type a prompt and send
 await page.click('#msg');
-await page.type('#msg', 'Which files make up this project? One short line each.', { delay: 55 });
+await page.type('#msg', 'What are the three most interesting implementation details in this codebase? Be brief.', { delay: 55 });
 await page.waitForTimeout(600);
 await page.click('#send');
 

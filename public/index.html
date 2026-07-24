@@ -691,7 +691,12 @@ qkEl.appendChild(modelChip);
 // ---------------------------------------------------------------------------
 // New session sheet
 // ---------------------------------------------------------------------------
-$('newbtn').addEventListener('click', () => $('sheet').classList.add('show'));
+$('newbtn').addEventListener('click', () => {
+  // Fresh fields every open — stale values from an aborted attempt compound
+  // into wrong paths (bit us in demo recording).
+  for (const id of ['ns-cwd', 'ns-label', 'ns-cmd']) $(id).value = '';
+  $('sheet').classList.add('show');
+});
 $('ns-cancel').addEventListener('click', () => $('sheet').classList.remove('show'));
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) $('sheet').classList.remove('show'); });
 $('ns-create').addEventListener('click', async () => {

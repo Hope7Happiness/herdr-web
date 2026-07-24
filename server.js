@@ -208,6 +208,11 @@ app.post('/api/workspaces', async (req, res) => {
   let { cwd, label, command } = req.body || {};
   try {
     if (cwd && cwd.startsWith('~')) cwd = path.join(require('node:os').homedir(), cwd.slice(1));
+    // Reject nonexistent dirs — herdr silently falls back to $HOME, which
+    // surprises users (and leaked a home listing into a demo recording).
+    if (cwd && !require('node:fs').existsSync(cwd)) {
+      return res.status(400).json({ error: `directory does not exist: ${cwd}` });
+    }
     const created = await herdr.request('workspace.create', { cwd, label });
     if (command) {
       await herdr.request('pane.send_text', { pane_id: created.root_pane.pane_id, text: `${command}\n` });
