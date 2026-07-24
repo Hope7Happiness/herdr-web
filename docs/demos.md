@@ -13,7 +13,7 @@ Type to a Claude Code session and watch the response stream into the live
 terminal view. The tab dot pulses green while the agent works, and the tab
 subtitle tracks the agent's own task title.
 
-https://github.com/user-attachments/assets/a687a81a-8baf-497e-88e1-a6a8ff273e46
+https://github.com/user-attachments/assets/b437eecc-a175-4cc4-ad05-7a753db097d3
 
 ### Smooth scrollback
 
@@ -22,7 +22,7 @@ swiping into the past is plain native scrolling with fling momentum, no
 mode switch, no fetch stall. The **↓ Live** chip lights up while you're in
 history; tapping it (or scrolling back down) returns to the live tail.
 
-https://github.com/user-attachments/assets/b4fadeb8-de0d-4c54-b18d-ca8adda2f703
+https://github.com/user-attachments/assets/b573db50-3605-40fd-9d6a-b8e0df02b96d
 
 ### Blocked agent → toast → jump
 
@@ -31,7 +31,7 @@ hits an approval prompt → its dot turns orange, a toast slides in, and the
 bell chip starts pulsing. Tap the toast to jump straight to the blocked
 pane.
 
-https://github.com/user-attachments/assets/475602cb-81a1-4995-8f63-d2ffcdaa7f42
+https://github.com/user-attachments/assets/61e00525-17f1-4c25-8a20-d7ccba95d3ec
 
 ### Done while you weren't looking
 
@@ -40,7 +40,7 @@ dot) with a "finished" toast. The bell chip cycles you to the next agent
 needing attention; viewing the pane marks it seen — in the web UI *and* in
 herdr itself.
 
-https://github.com/user-attachments/assets/3c0c76d5-46aa-4233-ba97-aa3d0c3ff662
+https://github.com/user-attachments/assets/7692ccc0-df1a-4e2c-896d-dcc81351105c
 
 ### Background system notification
 
@@ -55,7 +55,7 @@ The **+** button opens a sheet: pick a working directory (and optionally a
 label/command), and the new pane appears as a tab — here a plain shell that
 we immediately type into.
 
-https://github.com/user-attachments/assets/88b75ea9-2777-4a02-a116-1b799fbc848b
+https://github.com/user-attachments/assets/b452306b-18d2-49da-9680-f2f09ee4f4b8
 
 ## Desktop
 
@@ -63,4 +63,4 @@ The same single-page app at desktop size: the herdr runtime resizes to the
 bigger viewport, so the agent gets a wide terminal. Prompt, watch the
 response, wheel-scroll into history, hop between workspace tabs.
 
-https://github.com/user-attachments/assets/a9daeaf5-0bcc-4db5-b7f9-cc812884e083
+https://github.com/user-attachments/assets/12e95155-4c10-4cdf-9020-f42ebd4f543f
