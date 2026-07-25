@@ -7,7 +7,7 @@ backed by herdr's persistent PTY sessions and its semantic agent states
 
 Prompting a live Claude Code agent from a phone:
 
-https://github.com/user-attachments/assets/b437eecc-a175-4cc4-ad05-7a753db097d3
+https://github.com/user-attachments/assets/7441eba1-a791-437f-8f01-788bee9f55e1
 
 **More demos (mobile + desktop videos): [docs/demos.md](docs/demos.md)** ·
 Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordination.md)
