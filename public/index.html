@@ -104,6 +104,39 @@
     align-items: center; justify-content: center; color: var(--fg-dim); font-size: 14px;
   }
 
+  /* ---- preview / cast views ---- */
+  #preview, #cast { position: absolute; inset: 0; display: none; flex-direction: column; background: var(--bg); }
+  #preview.show, #cast.show { display: flex; }
+  .vbar {
+    display: flex; gap: 6px; padding: 6px 8px; align-items: center; flex: none;
+    background: var(--bg2); border-bottom: 1px solid var(--border);
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .vbar::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none; padding: 6px 11px; border-radius: 7px; font-size: 12px; cursor: pointer;
+    background: var(--bg3); border: 1px solid var(--border); color: var(--fg); user-select: none;
+    white-space: nowrap;
+  }
+  .chip.on { border-color: var(--accent); color: var(--accent); }
+  .chip .sub { color: var(--fg-dim); font-size: 10px; margin-left: 4px; }
+  #pvframe { flex: 1; border: 0; width: 100%; background: #fff; }
+  #casthost { flex: 1; position: relative; overflow: hidden; background: #000; touch-action: none; }
+  #castimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #casthint, #pvhint {
+    position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
+    text-align: center; color: var(--fg-dim); font-size: 13px; padding: 0 24px; line-height: 1.6;
+  }
+  #castinput {
+    flex: none; display: flex; gap: 6px; padding: 6px 8px; background: var(--bg2);
+    border-top: 1px solid var(--border);
+  }
+  #castinput input {
+    flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; font-size: 15px; outline: none;
+  }
+  .row-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+
   /* ---- footer ---- */
   #footer { flex: none; background: var(--bg2); border-top: 1px solid var(--border); }
   #quickkeys {
@@ -161,6 +194,12 @@
       <span>0</span>
     </div>
     <div id="tabs" style="display:flex;gap:6px;"></div>
+    <div class="tab-btn" id="pvbtn" title="Preview a local port">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>
+    </div>
+    <div class="tab-btn" id="castbtn" title="Cast a real browser">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>
+    </div>
     <div class="tab-btn" id="newbtn" title="New session">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     </div>
@@ -168,6 +207,24 @@
 
   <div id="termwrap">
     <div id="term"></div>
+
+    <div id="preview">
+      <div class="vbar" id="pvbar"></div>
+      <iframe id="pvframe" title="preview" allow="clipboard-read; clipboard-write"></iframe>
+      <div id="pvhint">Pick a local port above to preview it here.<br>Runs through this origin, so it gets HTTPS too.</div>
+    </div>
+
+    <div id="cast">
+      <div class="vbar" id="castbar"></div>
+      <div id="casthost">
+        <img id="castimg" alt="browser cast">
+        <div id="casthint">Attach to a Chrome DevTools endpoint to watch (and drive) a real browser — including the one your agent is automating.</div>
+      </div>
+      <div id="castinput">
+        <input id="casturl" placeholder="Type here → sends to the page · or a URL to navigate" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button class="chip" id="castgo">Go</button>
+      </div>
+    </div>
     <div id="empty">
       <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><line x1="12" y1="15" x2="17" y2="15"/></svg>
       <div>No session selected</div>
@@ -264,6 +321,29 @@ function charCells(cp) {
     cp >= 0x20000
   ) ? 2 : 1;
 }
+// Local dev URLs in agent output become tap targets that open the preview —
+// no modifier key, no typing the port.
+const LOCAL_URL = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::(\d+))?(\/[^\s'"`)\]]*)?/g;
+function appendLinkified(el, text) {
+  LOCAL_URL.lastIndex = 0;
+  let last = 0, m, found = false;
+  while ((m = LOCAL_URL.exec(text))) {
+    found = true;
+    if (m.index > last) appendGlyphAware(el, text.slice(last, m.index));
+    const a = document.createElement('span');
+    a.className = 'row-link';
+    a.textContent = m[0];
+    const port = Number(m[1] || 80);
+    const path = m[2] || '/';
+    a.addEventListener('click', (e) => { e.stopPropagation(); openPreview(port, path); });
+    el.appendChild(a);
+    last = m.index + m[0].length;
+  }
+  if (!found) return false;
+  if (last < text.length) appendGlyphAware(el, text.slice(last));
+  return true;
+}
+
 function appendGlyphAware(el, text) {
   if (MONO_SAFE.test(text)) { el.appendChild(document.createTextNode(text)); return; }
   let run = '';
@@ -284,7 +364,7 @@ function renderRow(spans) {
   div.className = 'row';
   for (const s of spans) {
     const el = document.createElement('span');
-    appendGlyphAware(el, s.t);
+    if (!appendLinkified(el, s.t)) appendGlyphAware(el, s.t);
     let fg = colorOf(s.f), bg = colorOf(s.g);
     if (s.m & 16) { const t = fg || '#e6edf3'; fg = bg || '#0d1117'; bg = t; }
     if (fg) el.style.color = fg;
@@ -723,6 +803,181 @@ document.addEventListener('visibilitychange', () => {
     if (atBottom) pinBottom();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Views: terminal · preview (Tier 1) · cast (Tier 2)
+// ---------------------------------------------------------------------------
+let view = 'term';
+function setView(v) {
+  view = v;
+  $('preview').classList.toggle('show', v === 'preview');
+  $('cast').classList.toggle('show', v === 'cast');
+  $('pvbtn').style.color = v === 'preview' ? 'var(--accent)' : '';
+  $('castbtn').style.color = v === 'cast' ? 'var(--accent)' : '';
+  $('footer').style.display = v === 'term' ? '' : 'none';
+  if (v !== 'cast') stopCast();
+  if (v === 'term' && atBottom) pinBottom();
+}
+
+// ---- preview -------------------------------------------------------------
+let pvPort = null;
+async function openPreview(port, path = '/') {
+  setView('preview');
+  await loadPorts();
+  if (port) selectPort(port, path);
+}
+async function loadPorts() {
+  let ports = [];
+  try { ports = (await (await fetch('/api/ports')).json()).ports || []; } catch { /* ignore */ }
+  const bar = $('pvbar');
+  bar.replaceChildren();
+  if (!ports.length) {
+    const c = document.createElement('div');
+    c.className = 'chip';
+    c.textContent = 'no local ports found';
+    bar.appendChild(c);
+  }
+  for (const p of ports) {
+    const c = document.createElement('div');
+    c.className = 'chip' + (p.port === pvPort ? ' on' : '');
+    c.innerHTML = `${p.port}${p.process ? `<span class="sub">${p.process}</span>` : ''}`;
+    c.addEventListener('click', () => selectPort(p.port));
+    bar.appendChild(c);
+  }
+  const r = document.createElement('div');
+  r.className = 'chip';
+  r.textContent = '⟳';
+  r.title = 'reload preview';
+  r.addEventListener('click', () => { if (pvPort) $('pvframe').contentWindow.location.reload(); });
+  bar.appendChild(r);
+}
+async function selectPort(port, path = '/') {
+  pvPort = port;
+  await fetch('/api/preview/enable', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ port }),
+  });
+  $('pvhint').style.display = 'none';
+  $('pvframe').src = `/p/${port}${path.startsWith('/') ? path : '/' + path}`;
+  loadPorts();
+}
+$('pvbtn').addEventListener('click', () => (view === 'preview' ? setView('term') : openPreview(pvPort)));
+
+// ---- cast ----------------------------------------------------------------
+let castWs = null, castNat = { w: 0, h: 0 };
+function stopCast() { try { castWs?.close(); } catch { /* ignore */ } castWs = null; }
+async function openCast() {
+  setView('cast');
+  const bar = $('castbar');
+  bar.replaceChildren();
+  let data = { targets: [] };
+  try { data = await (await fetch('/api/cast/targets')).json(); } catch { /* ignore */ }
+  if (data.error || !data.targets?.length) {
+    const c = document.createElement('div');
+    c.className = 'chip';
+    c.textContent = `no CDP pages on :${data.cdpPort || 9222}`;
+    bar.appendChild(c);
+    return;
+  }
+  for (const t of data.targets) {
+    const c = document.createElement('div');
+    c.className = 'chip';
+    const label = (t.title || t.url || '').slice(0, 28) || 'page';
+    c.textContent = label;
+    c.addEventListener('click', () => {
+      [...bar.children].forEach((x) => x.classList.remove('on'));
+      c.classList.add('on');
+      attachCast(t.id);
+    });
+    bar.appendChild(c);
+  }
+  const fit = document.createElement('div');
+  fit.className = 'chip' + (castFit ? ' on' : '');
+  fit.textContent = 'fit to phone';
+  fit.addEventListener('click', () => { castFit = !castFit; fit.classList.toggle('on', castFit); sendViewport(); });
+  bar.appendChild(fit);
+  bar.firstChild.classList.add('on');
+  attachCast(data.targets[0].id);
+}
+let castFit = true;
+function sendViewport() {
+  const r = $('casthost').getBoundingClientRect();
+  castSend({ type: 'viewport', fit: castFit, w: r.width, h: r.height, dpr: Math.min(devicePixelRatio || 2, 2) });
+}
+function attachCast(targetId) {
+  stopCast();
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  castWs = new WebSocket(`${proto}://${location.host}/cast?target=${encodeURIComponent(targetId)}`);
+  castWs.onopen = () => setTimeout(sendViewport, 400);
+  castWs.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'frame') {
+      castNat = { w: m.w, h: m.h };
+      $('castimg').src = 'data:image/jpeg;base64,' + m.data;
+      $('casthint').style.display = 'none';
+    } else if (m.type === 'error') {
+      $('casthint').textContent = m.error;
+      $('casthint').style.display = '';
+    }
+  };
+  castWs.onclose = () => { if (view === 'cast') $('casthint').style.display = ''; };
+}
+function castSend(o) { if (castWs?.readyState === 1) castWs.send(JSON.stringify(o)); }
+// Map a tap on the letterboxed <img> back to page pixels.
+function castPoint(e) {
+  const img = $('castimg');
+  const r = img.getBoundingClientRect();
+  if (!castNat.w || !castNat.h) return null;
+  const scale = Math.min(r.width / castNat.w, r.height / castNat.h);
+  const dw = castNat.w * scale, dh = castNat.h * scale;
+  const x = (e.clientX - r.left - (r.width - dw) / 2) / scale;
+  const y = (e.clientY - r.top - (r.height - dh) / 2) / scale;
+  if (x < 0 || y < 0 || x > castNat.w || y > castNat.h) return null;
+  return { x: Math.round(x), y: Math.round(y) };
+}
+let castDrag = null;
+$('casthost').addEventListener('touchstart', (e) => {
+  const p = castPoint(e.touches[0]);
+  castDrag = p ? { ...p, t: Date.now(), moved: 0 } : null;
+}, { passive: true });
+$('casthost').addEventListener('touchmove', (e) => {
+  if (!castDrag) return;
+  const p = castPoint(e.touches[0]);
+  if (!p) return;
+  const dy = castDrag.y - p.y;
+  castDrag.moved += Math.abs(dy);
+  if (Math.abs(dy) > 1) { castSend({ type: 'scroll', x: p.x, y: p.y, dy }); castDrag.y = p.y; }
+}, { passive: true });
+$('casthost').addEventListener('touchend', () => {
+  if (castDrag && castDrag.moved < 8 && Date.now() - castDrag.t < 500) {
+    castSend({ type: 'mouse', action: 'click', x: castDrag.x, y: castDrag.y });
+  }
+  castDrag = null;
+});
+$('casthost').addEventListener('click', (e) => {
+  if (e.pointerType === 'touch' || !castNat.w) return;
+  const p = castPoint(e);
+  if (p) castSend({ type: 'mouse', action: 'click', ...p });
+});
+$('casthost').addEventListener('wheel', (e) => {
+  const p = castPoint(e);
+  if (p) castSend({ type: 'scroll', ...p, dy: e.deltaY });
+}, { passive: true });
+$('castbtn').addEventListener('click', () => (view === 'cast' ? setView('term') : openCast()));
+$('castgo').addEventListener('mousedown', (e) => e.preventDefault());
+$('castgo').addEventListener('click', castSubmit);
+$('casturl').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); castSubmit(); } });
+function castSubmit() {
+  const v = $('casturl').value.trim();
+  if (!v) { castSend({ type: 'key', key: 'Enter' }); return; }
+  if (/^https?:\/\//.test(v) || /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(v) || /^localhost(:\d+)?/.test(v)) {
+    castSend({ type: 'navigate', url: /^https?:\/\//.test(v) ? v : 'http://' + v });
+  } else {
+    castSend({ type: 'text', text: v });
+    castSend({ type: 'key', key: 'Enter' });
+  }
+  $('casturl').value = '';
+}
 
 // PWA service worker
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');

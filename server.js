@@ -9,6 +9,8 @@ const { WebSocketServer } = require('ws');
 const herdr = require('./lib/herdr-client');
 const { parseAnsiScreen } = require('./lib/ansi');
 const { SizeDriver } = require('./lib/size-driver');
+const preview = require('./lib/preview');
+const cast = require('./lib/cast');
 
 const sizeDriver = new SizeDriver();
 
@@ -234,6 +236,38 @@ app.delete('/api/workspaces/:id', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Preview (Tier 1) and Cast (Tier 2)
+// ---------------------------------------------------------------------------
+
+app.get('/api/ports', async (_req, res) => {
+  res.json({ ports: await preview.listPorts(PORT) });
+});
+
+// Enabling a port is explicit: proxying arbitrary loopback ports would widen
+// what anything reaching this bridge can touch.
+app.post('/api/preview/enable', (req, res) => {
+  const port = Number(req.body?.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return res.status(400).json({ error: 'invalid port' });
+  }
+  preview.allow(port);
+  jlog('info', 'preview-enabled', { port });
+  res.json({ ok: true, port });
+});
+
+app.get('/api/cast/targets', async (_req, res) => {
+  try {
+    res.json({ targets: await cast.listTargets(), cdpPort: cast.CDP_PORT });
+  } catch (e) {
+    res.status(503).json({ error: e.message, cdpPort: cast.CDP_PORT });
+  }
+});
+
+// Proxy for enabled preview ports — must sit before the static handler so a
+// dev server's /index.html wins over ours when routed by Referer.
+app.use((req, res, next) => { if (!preview.handle(req, res)) next(); });
+
 // index.html must never be cached (PWA staleness trap — tmux-web lesson).
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
@@ -244,7 +278,29 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ noServer: true });
+const castWss = new WebSocketServer({ noServer: true });
+
+// One upgrade handler for three consumers: the session WS, cast sessions, and
+// proxied dev-server sockets (Vite HMR et al).
+server.on('upgrade', (req, socket, head) => {
+  const path = (req.url || '').split('?')[0];
+  if (path === '/ws') {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  } else if (path === '/cast') {
+    castWss.handleUpgrade(req, socket, head, (ws) => castWss.emit('connection', ws, req));
+  } else if (!preview.handleUpgrade(req, socket, head)) {
+    socket.destroy();
+  }
+});
+
+castWss.on('connection', (ws, req) => {
+  const targetId = new URL(req.url, 'http://x').searchParams.get('target');
+  cast.attach(ws, targetId).catch((e) => {
+    jlog('error', 'cast-attach-failed', { error: e.message });
+    try { ws.send(JSON.stringify({ type: 'error', error: e.message })); ws.close(); } catch { /* ignore */ }
+  });
+});
 
 wss.on('connection', (ws) => {
   state.webClients.add(ws);
