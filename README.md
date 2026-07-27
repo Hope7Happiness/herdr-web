@@ -57,6 +57,11 @@ pixels as real `Input` events, and the cast page is *reflowed to your phone*
 via a device-metrics override — reverted on detach, so an agent's browser is
 never left resized behind its back.
 
+**Takeover, page-errors→agent and the element picker** turn the cast into part
+of the loop: watch the agent browse, take control when you need to, send the
+page's real console errors into the prompt, and tap an element to aim your next
+instruction at it — see [the agent-loop demo](docs/demos/agent-loop.md).
+
 Demos: [desktop, side by side](docs/demos/desktop-browser.md) ·
 [preview on a phone](docs/demos/preview-tap.md) ·
 [cast a real Chrome](docs/demos/cast-browser.md).

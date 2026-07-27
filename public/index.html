@@ -830,7 +830,11 @@ function setView(v) {
   $('castbtn').style.color = v === 'cast' ? 'var(--accent)' : '';
   // Keep the agent's input reachable whenever the terminal is on screen.
   $('footer').style.display = (v === 'term' || split) ? '' : 'none';
-  if (v !== 'cast') stopCast();
+  // Leaving the cast view must NOT drop the session: on a phone you step back
+  // to the terminal to send a prompt, and losing takeover (and the collected
+  // errors) every time you do that makes the whole loop unusable. Pause the
+  // frames instead — state lives on until you detach or switch target.
+  castSend({ type: v === 'cast' ? 'resume' : 'pause' });
   if ((v === 'term' || split) && atBottom) pinBottom();
   if (split) setTimeout(sendFit, 350); // terminal is narrower now
 }
@@ -912,13 +916,94 @@ async function openCast() {
     });
     bar.appendChild(c);
   }
+  // Controls come before context, and the labels shrink on a phone: this bar
+  // scrolls, and a chip you cannot see is a chip you do not have.
+  castErrChip = document.createElement('div');
+  castErrChip.className = 'chip';
+  castErrChip.style.display = 'none';
+  castErrChip.addEventListener('click', sendErrorsToAgent);
+
+  // Takeover / hand-back. Watching is the default: the agent may be driving
+  // this browser, and stray taps from a pocket would fight it.
+  castModeChip = document.createElement('div');
+  castModeChip.className = 'chip';
+  castModeChip.addEventListener('click', () => setCastMode(castMode === 'control' ? 'watch' : 'control'));
+
+  // Element picker → agent prompt.
+  castPickChip = document.createElement('div');
+  castPickChip.className = 'chip';
+  castPickChip.textContent = castNarrow() ? '⌖ pick' : 'pick element';
+  castPickChip.addEventListener('click', () => setPickMode(!castPick));
+
   const fit = document.createElement('div');
   fit.className = 'chip' + (castFit ? ' on' : '');
-  fit.textContent = 'fit to phone';
+  fit.textContent = castNarrow() ? 'fit' : 'fit to phone';
   fit.addEventListener('click', () => { castFit = !castFit; fit.classList.toggle('on', castFit); sendViewport(); });
-  bar.appendChild(fit);
+
+  bar.prepend(castErrChip, castModeChip, castPickChip, fit);
+  renderCastMode();
   bar.firstChild.classList.add('on');
   attachCast(data.targets[0].id);
+}
+
+let castMode = 'watch', castPick = false, castErrors = [];
+let castModeChip = null, castPickChip = null, castErrChip = null;
+function castNarrow() { return window.innerWidth < 560; }
+function setCastMode(mode) {
+  castMode = mode;
+  if (mode !== 'control') setPickMode(false);
+  castSend({ type: 'mode', mode });
+  renderCastMode();
+}
+function setPickMode(on) {
+  castPick = on;
+  castPickChip?.classList.toggle('on', on);
+  $('casthost').style.cursor = on ? 'crosshair' : '';
+  renderCastMode();
+}
+function renderCastMode() {
+  if (!castModeChip) return;
+  const control = castMode === 'control';
+  castModeChip.textContent = castNarrow()
+    ? (control ? '✋ control' : '👁 watch')
+    : (control ? '✋ you have control' : '👁 watching');
+  castModeChip.classList.toggle('on', control);
+  $('casthint').style.display = (control || castErrors.length) ? 'none' : '';
+  if (!control) {
+    $('casthint').textContent = castPick
+      ? 'Tap an element to send it to the agent.'
+      : 'Watching the agent’s browser. Tap “you have control” to take over, then hand it back the same way.';
+    $('casthint').style.display = castNat.w ? 'none' : '';
+  }
+}
+function renderCastErrors() {
+  if (!castErrChip) return;
+  const n = castErrors.length;
+  castErrChip.style.display = n ? '' : 'none';
+  castErrChip.textContent = castNarrow()
+    ? `⚠ ${n} → agent`
+    : `⚠ ${n} page error${n === 1 ? '' : 's'} → agent`;
+  castErrChip.classList.toggle('on', n > 0);
+  if (!n) return;
+  // Errors are the most time-critical chip in the bar, and the bar scrolls:
+  // put it first and bring it into view, or it appears past the right edge
+  // exactly when you need it.
+  const bar = $('castbar');
+  if (bar.firstChild !== castErrChip) bar.prepend(castErrChip);
+  castErrChip.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+}
+// Compose a report and drop it in the agent prompt — filled, not sent, so you
+// see what goes to the agent before it does.
+function sendErrorsToAgent() {
+  if (!castErrors.length || !activePane) return;
+  const url = document.getElementById('casturlchip')?.textContent || 'the page';
+  const lines = castErrors.slice(0, 8).map((e, i) =>
+    `${i + 1}. [${e.kind}] ${e.text}${e.where ? ` (${e.where})` : ''}`);
+  msg.value = `The page ${url} is logging these errors:\n${lines.join('\n')}\n\nFind and fix the cause.`;
+  msg.style.height = 'auto';
+  msg.style.height = Math.min(msg.scrollHeight, 120) + 'px';
+  if (!isSplit()) setView('term');
+  msg.focus();
 }
 let castFit = true;
 // Live URL of the cast page — the target's title goes stale the moment you
@@ -950,6 +1035,18 @@ function attachCast(targetId) {
       $('casthint').style.display = 'none';
     } else if (m.type === 'meta') {
       castUrlChip().textContent = (m.url || '').replace(/^https?:\/\//, '').slice(0, 34) || '—';
+    } else if (m.type === 'errors') {
+      castErrors = m.errors || [];
+      renderCastErrors();
+    } else if (m.type === 'mode') {
+      castMode = m.mode;
+      renderCastMode();
+    } else if (m.type === 'picked') {
+      onPicked(m);
+    } else if (m.type === 'blocked') {
+      $('casthint').textContent = 'Watching — tap “you have control” to interact.';
+      $('casthint').style.display = '';
+      setTimeout(() => renderCastMode(), 1600);
     } else if (m.type === 'error') {
       $('casthint').textContent = m.error;
       $('casthint').style.display = '';
@@ -958,6 +1055,18 @@ function attachCast(targetId) {
   castWs.onclose = () => { if (view === 'cast') $('casthint').style.display = ''; };
 }
 function castSend(o) { if (castWs?.readyState === 1) castWs.send(JSON.stringify(o)); }
+// A picked element becomes the subject of your next prompt: the selector and
+// its text go in the box, you type what you want done to it.
+function onPicked(m) {
+  setPickMode(false);
+  if (m.error) { $('casthint').textContent = m.error; $('casthint').style.display = ''; return; }
+  const label = m.text ? ` — "${m.text}"` : '';
+  msg.value = `In the app, the element \`${m.selector}\` (<${m.tag}>${label}): `;
+  msg.style.height = 'auto';
+  msg.style.height = Math.min(msg.scrollHeight, 120) + 'px';
+  if (!isSplit()) setView('term');
+  msg.focus();
+}
 // Map a tap on the letterboxed <img> back to page pixels.
 function castPoint(e) {
   const img = $('castimg');
@@ -985,20 +1094,29 @@ $('casthost').addEventListener('touchmove', (e) => {
 }, { passive: true });
 $('casthost').addEventListener('touchend', () => {
   if (castDrag && castDrag.moved < 8 && Date.now() - castDrag.t < 500) {
-    castSend({ type: 'mouse', action: 'click', x: castDrag.x, y: castDrag.y });
+    castTap(castDrag.x, castDrag.y);
   }
   castDrag = null;
 });
 $('casthost').addEventListener('click', (e) => {
   if (e.pointerType === 'touch' || !castNat.w) return;
   const p = castPoint(e);
-  if (p) castSend({ type: 'mouse', action: 'click', ...p });
+  if (p) castTap(p.x, p.y);
 });
+// One tap, two meanings: pick the element, or click it.
+function castTap(x, y) {
+  castSend(castPick ? { type: 'pick', x, y } : { type: 'mouse', action: 'click', x, y });
+}
 $('casthost').addEventListener('wheel', (e) => {
   const p = castPoint(e);
   if (p) castSend({ type: 'scroll', ...p, dy: e.deltaY });
 }, { passive: true });
-$('castbtn').addEventListener('click', () => (view === 'cast' ? setView('term') : openCast()));
+$('castbtn').addEventListener('click', () => {
+  if (view === 'cast') { setView('term'); return; }
+  // A live session keeps its mode, errors and target — just show it again.
+  if (castWs?.readyState === 1) { setView('cast'); return; }
+  openCast();
+});
 $('castgo').addEventListener('mousedown', (e) => e.preventDefault());
 $('castgo').addEventListener('click', castSubmit);
 $('casturl').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); castSubmit(); } });

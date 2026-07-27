@@ -9,6 +9,7 @@ HTTPS, or on desktop Chromium; videos are hosted as GitHub attachments
 
 - **[Desktop: agent and the real page, side by side](demos/desktop-browser.md)** — The whole argument for herdr-web in 40 seconds.
 - **[Preview: tap a localhost URL, get the real page](demos/preview-tap.md)** — Phone. Dev server output → one tap → a live, interactive app.
+- **[Takeover, page errors → agent, element picker](demos/agent-loop.md)** — The browser becomes part of the agent loop (desktop + mobile).
 - **[Cast: drive a real Chrome from the phone](demos/cast-browser.md)** — For pages the proxy cannot frame — and for watching your agent browse.
 
 ## Mobile basics

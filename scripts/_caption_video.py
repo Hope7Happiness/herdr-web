@@ -10,8 +10,15 @@ FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
 def esc(text):
-    # ffmpeg filtergraph escaping: backslash, colon, single quote
-    return text.replace("\\", r"\\").replace(":", r"\:").replace("'", r"\'")
+    """Escape for a single-quoted drawtext argument.
+
+    Apostrophes cannot be escaped reliably inside the quoted form, so they are
+    swapped for a typographic quote — which reads better on screen anyway.
+    """
+    return (text.replace("\\", r"\\")
+                .replace("'", "’")
+                .replace(":", r"\:")
+                .replace("%", r"\%"))
 
 
 def main():
