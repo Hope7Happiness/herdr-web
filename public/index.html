@@ -837,6 +837,10 @@ async function loadPorts() {
     c.textContent = 'no local ports found';
     bar.appendChild(c);
   }
+  // The port you are viewing leads — otherwise it can sit off-screen in a
+  // long strip, which is where it matters most.
+  if (pvPort && !ports.some((p) => p.port === pvPort)) ports.unshift({ port: pvPort, process: null });
+  ports.sort((a, b) => (b.port === pvPort) - (a.port === pvPort));
   for (const p of ports) {
     const c = document.createElement('div');
     c.className = 'chip' + (p.port === pvPort ? ' on' : '');
@@ -900,6 +904,18 @@ async function openCast() {
   attachCast(data.targets[0].id);
 }
 let castFit = true;
+// Live URL of the cast page — the target's title goes stale the moment you
+// navigate, which is exactly when you want to know where you are.
+function castUrlChip() {
+  let c = document.getElementById('casturlchip');
+  if (!c) {
+    c = document.createElement('div');
+    c.id = 'casturlchip';
+    c.className = 'chip on';
+    $('castbar').insertBefore(c, $('castbar').firstChild);
+  }
+  return c;
+}
 function sendViewport() {
   const r = $('casthost').getBoundingClientRect();
   castSend({ type: 'viewport', fit: castFit, w: r.width, h: r.height, dpr: Math.min(devicePixelRatio || 2, 2) });
@@ -915,6 +931,8 @@ function attachCast(targetId) {
       castNat = { w: m.w, h: m.h };
       $('castimg').src = 'data:image/jpeg;base64,' + m.data;
       $('casthint').style.display = 'none';
+    } else if (m.type === 'meta') {
+      castUrlChip().textContent = (m.url || '').replace(/^https?:\/\//, '').slice(0, 34) || '—';
     } else if (m.type === 'error') {
       $('casthint').textContent = m.error;
       $('casthint').style.display = '';

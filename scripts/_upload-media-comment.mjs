@@ -5,13 +5,14 @@
 import { chromium } from '@playwright/test';
 import path from 'node:path';
 
+const issue = process.env.MEDIA_ISSUE || '3';
 const files = process.argv.slice(2);
 if (!files.length) { console.error('usage: _upload-media-comment.mjs <file.mp4>...'); process.exit(2); }
 
 const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
 const page = await browser.contexts()[0].newPage();
 try {
-  await page.goto('https://github.com/eyalev/herdr-web/issues/1', { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await page.goto(`https://github.com/eyalev/herdr-web/issues/${issue}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForTimeout(3500);
 
   const body = page.locator('textarea[placeholder*="comment"], textarea[aria-label*="Comment"], textarea[placeholder*="Type your"]').last();

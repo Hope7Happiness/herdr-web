@@ -28,7 +28,35 @@ Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordinatio
   scroll container; swiping into the past is plain native scrolling.
 - **Quick keys + input** — Esc, Tab, ⇧Tab, Ctrl-C, arrows, Enter; text
   submits atomically via herdr's `agent.prompt` (no half-pasted prompts).
+- **An integrated browser that isn't a pixel stream** — see below.
 - **PWA** — installable, no build step, three runtime dependencies.
+
+## The integrated browser
+
+A terminal can only *show pictures of* a web page — hence the ingenious
+kitty-graphics/chafa pipelines other herdr browser plugins need. herdr-web
+is already a browser, so it can skip that entirely:
+
+**Preview (default).** The bridge reverse-proxies a local dev server under
+this same origin and shows it in an iframe, so you get the **real page** —
+selectable text, native pinch-zoom and momentum scroll, a real keyboard,
+forms and file pickers. Bandwidth is the app's own assets, not JPEG frames
+of them. Two side effects worth having: your plain-HTTP dev server inherits
+the bridge's HTTPS, and no dev port needs its own tunnel. Ports are
+discovered automatically and ranked dev-server-first, and any
+`http://localhost:PORT` in agent output is a tap target — no modifier key.
+
+**Cast (fallback, and for watching agents).** For pages that refuse framing,
+need your logged-in session, or are simply remote, herdr-web attaches to a
+Chrome DevTools endpoint (`HERDR_WEB_CDP_PORT`, default 9222 — i.e. the
+browser your agent automates) and streams `Page.startScreencast` frames.
+Because the sink is a browser rather than a terminal, frames land in an
+`<img>` with no cell quantization, taps and drags map straight onto page
+pixels as real `Input` events, and the cast page is *reflowed to your phone*
+via a device-metrics override — reverted on detach, so an agent's browser is
+never left resized behind its back.
+
+Demos of both: [docs/demos.md](docs/demos.md#integrated-browser).
 
 ## Install
 
@@ -101,6 +129,7 @@ The full empirical API recon that shaped this design:
 | `HERDR_WEB_PORT` | `7930` | HTTP/WS port |
 | `HERDR_WEB_BIND` | `127.0.0.1` | Listen address |
 | `HERDR_SOCKET_PATH` | `~/.config/herdr/herdr.sock` | herdr API socket |
+| `HERDR_WEB_CDP_PORT` | `9222` | Chrome DevTools endpoint used by Cast |
 
 Recommended herdr config (`~/.config/herdr/config.toml`) so headless panes
 get full width:

@@ -58,6 +58,30 @@ we immediately type into.
 
 https://github.com/user-attachments/assets/cd286205-3170-4c6a-b812-d1dce8691e4a
 
+## Integrated browser
+
+### Preview: tap a localhost URL, get the real page
+
+The dev server prints `http://localhost:5177/` — tapping it opens the app
+right next to the agent that is building it. This is a genuine iframe over
+a same-origin reverse proxy, not a screencast: the taps below actually run
+the app's JavaScript (watch the counter), text is selectable, and pinch-zoom
+is the browser's own. The active port leads the chip strip; the others are
+discovered from listening sockets and ranked dev-server-first.
+
+https://github.com/user-attachments/assets/b5357178-5ac0-458d-b57f-7483ff7d6f05
+
+### Cast: drive a real Chrome from the phone
+
+For anything the proxy can't frame — or to watch the browser your agent is
+automating — herdr-web attaches to a Chrome DevTools endpoint and streams
+frames. Here the page is scrolled by dragging, then driven somewhere else by
+typing a URL. Note the page is rendered in *mobile* layout: herdr-web pushes
+its own viewport to the remote browser, so you get a phone-shaped page
+instead of a letterboxed desktop one. The chip shows the live URL.
+
+https://github.com/user-attachments/assets/68a40e3c-c076-47a1-9070-e2a370f8f0b7
+
 ## Desktop
 
 The same single-page app at desktop size: the herdr runtime resizes to the
