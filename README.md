@@ -5,11 +5,12 @@ view and drive your coding agents (Claude Code first) from a phone browser,
 backed by herdr's persistent PTY sessions and its semantic agent states
 (idle / working / blocked / done).
 
-Prompting a live Claude Code agent from a phone:
+**[Watch the 40-second desktop demo →](docs/demos/desktop-browser.md)** — an
+agent restyling an app while you watch the real page repaint beside it.
 
-https://github.com/user-attachments/assets/7441eba1-a791-437f-8f01-788bee9f55e1
+https://github.com/user-attachments/assets/19caaa1d-49de-4ec8-9549-90af1956c0bb
 
-**More demos (mobile + desktop videos): [docs/demos.md](docs/demos.md)** ·
+**Every demo, one page each: [docs/demos.md](docs/demos.md)** ·
 Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordination.md)
 
 ## What you get
@@ -56,7 +57,9 @@ pixels as real `Input` events, and the cast page is *reflowed to your phone*
 via a device-metrics override — reverted on detach, so an agent's browser is
 never left resized behind its back.
 
-Demos of both: [docs/demos.md](docs/demos.md#integrated-browser).
+Demos: [desktop, side by side](docs/demos/desktop-browser.md) ·
+[preview on a phone](docs/demos/preview-tap.md) ·
+[cast a real Chrome](docs/demos/cast-browser.md).
 
 ## Install
 

@@ -107,6 +107,16 @@
   /* ---- preview / cast views ---- */
   #preview, #cast { position: absolute; inset: 0; display: none; flex-direction: column; background: var(--bg); }
   #preview.show, #cast.show { display: flex; }
+
+  /* On a wide screen there is room for both: the agent keeps working on the
+     left while the real page it is building lives on the right. */
+  @media (min-width: 900px) {
+    #termwrap.split { display: flex; }
+    #termwrap.split #term { width: 50%; height: 100%; }
+    #termwrap.split #preview.show, #termwrap.split #cast.show {
+      position: relative; inset: auto; width: 50%; border-left: 1px solid var(--border);
+    }
+  }
   .vbar {
     display: flex; gap: 6px; padding: 6px 8px; align-items: center; flex: none;
     background: var(--bg2); border-bottom: 1px solid var(--border);
@@ -808,16 +818,23 @@ document.addEventListener('visibilitychange', () => {
 // Views: terminal · preview (Tier 1) · cast (Tier 2)
 // ---------------------------------------------------------------------------
 let view = 'term';
+const SPLIT_MIN = 900;
+function isSplit() { return window.innerWidth >= SPLIT_MIN; }
 function setView(v) {
   view = v;
+  const split = v !== 'term' && isSplit();
   $('preview').classList.toggle('show', v === 'preview');
   $('cast').classList.toggle('show', v === 'cast');
+  $('termwrap').classList.toggle('split', split);
   $('pvbtn').style.color = v === 'preview' ? 'var(--accent)' : '';
   $('castbtn').style.color = v === 'cast' ? 'var(--accent)' : '';
-  $('footer').style.display = v === 'term' ? '' : 'none';
+  // Keep the agent's input reachable whenever the terminal is on screen.
+  $('footer').style.display = (v === 'term' || split) ? '' : 'none';
   if (v !== 'cast') stopCast();
-  if (v === 'term' && atBottom) pinBottom();
+  if ((v === 'term' || split) && atBottom) pinBottom();
+  if (split) setTimeout(sendFit, 350); // terminal is narrower now
 }
+window.addEventListener('resize', () => { if (view !== 'term') setView(view); });
 
 // ---- preview -------------------------------------------------------------
 let pvPort = null;
