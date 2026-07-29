@@ -29,6 +29,11 @@ Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordinatio
   scroll container; swiping into the past is plain native scrolling.
 - **Quick keys + input** — Esc, Tab, ⇧Tab, Ctrl-C, arrows, Enter; text
   submits atomically via herdr's `agent.prompt` (no half-pasted prompts).
+- **A Claude Code menu** — one `✳ CC` chip that knows what the pane is: launch
+  your configured command (`ccpc`, `claude --continue`, …) in a shell, or drive
+  a running agent with `/model`, `/compact`, `/clear`, mode cycling and rewind.
+- **Directory picker** — `📁 cd` finds projects by zoxide frecency, git repos
+  and open panes, so you never type a path on a phone.
 - **An integrated browser that isn't a pixel stream** — see below.
 - **PWA** — installable, no build step, three runtime dependencies.
 

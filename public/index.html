@@ -167,6 +167,9 @@
     cursor: pointer; user-select: none; font-family: ui-monospace, monospace;
   }
   .qk:active { background: #2c3440; }
+  /* The one chip that opens everything Claude-Code-specific reads as a place to
+     go, not another key to press. */
+  .qk.cc { background: rgba(88,166,255,.14); border-color: rgba(88,166,255,.5); color: #9ecbff; }
   #inputrow { display: flex; gap: 8px; padding: 7px 8px 9px; align-items: flex-end; }
   #msg {
     flex: 1; min-height: 40px; max-height: 120px; resize: none;
@@ -210,6 +213,17 @@
     color: var(--fg-dim); font-size: 11px;
   }
   .hint code { background: var(--bg3); padding: 1px 4px; border-radius: 4px; }
+  /* ---- Claude Code sheet ---- */
+  .cchead { font-size: 10px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .07em; }
+  .ccgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 6px; }
+  .ccbtn {
+    padding: 10px 8px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border);
+    color: var(--fg); font-size: 13px; text-align: center; cursor: pointer; user-select: none;
+    font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ccbtn:active { background: #2c3440; }
+  .ccbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; grid-column: 1 / -1; }
+  .ccbtn .sub { display: block; font-size: 10px; opacity: .75; margin-top: 3px; font-family: system-ui, sans-serif; }
   #sheet input, .sheet input {
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 12px; font-size: 15px; width: 100%;
@@ -281,6 +295,19 @@
   </div>
 
   <div id="toast"></div>
+
+  <div id="ccsheet" class="sheet">
+    <div class="panel">
+      <h2>Claude Code</h2>
+      <p class="hint" id="cc-ctx"></p>
+      <div id="cc-body" style="display:flex; flex-direction:column; gap:10px;"></div>
+      <p class="hint" id="cc-hint"></p>
+      <div class="actions">
+        <button id="cc-settings">Settings</button>
+        <button id="cc-cancel">Close</button>
+      </div>
+    </div>
+  </div>
 
   <div id="dirsheet" class="sheet">
     <div class="panel">
@@ -939,28 +966,135 @@ for (const [label, keys] of QUICK_KEYS) {
   });
   qkEl.appendChild(b);
 }
-// /model chip sends text
-const cdChip = document.createElement('div');
-cdChip.className = 'qk';
-cdChip.textContent = '\u{1F4C1} cd';
-cdChip.tabIndex = -1;
-cdChip.addEventListener('mousedown', (e) => e.preventDefault());
-cdChip.addEventListener('click', () => openDirPicker());
+function keyChip(label, cls, onClick) {
+  const b = document.createElement('div');
+  b.className = cls;
+  b.textContent = label;
+  b.tabIndex = -1;
+  b.addEventListener('mousedown', (e) => e.preventDefault());
+  b.addEventListener('click', onClick);
+  return b;
+}
 // Front of the row: the keys strip scrolls, and a control you cannot see is a
-// control you do not have (learned the same lesson on the cast chips).
+// control you do not have (learned the same lesson on the cast chips). The two
+// chips that open something go first, ahead of the raw keys.
+const cdChip = keyChip('\u{1F4C1} cd', 'qk', () => openDirPicker());
+const ccChip = keyChip('✳ CC', 'qk cc', openCcSheet);
 qkEl.insertBefore(cdChip, qkEl.firstChild?.nextSibling || null);
-
-const modelChip = document.createElement('div');
-modelChip.className = 'qk';
-modelChip.textContent = '/model';
-modelChip.tabIndex = -1;
-modelChip.addEventListener('mousedown', (e) => e.preventDefault());
-modelChip.addEventListener('click', () => { msg.value = '/model '; msg.focus(); });
-qkEl.appendChild(modelChip);
+qkEl.insertBefore(ccChip, cdChip);
 
 // ---------------------------------------------------------------------------
-// New session sheet
+// Claude Code menu — one parent chip, everything CC-specific behind it
 // ---------------------------------------------------------------------------
+// Two different panes wear the same UI here: a shell you want to *launch* an
+// agent in, and a running agent you want to *steer*. Showing both sets at once
+// would be twice the buttons and half of them wrong, so the sheet asks the pane
+// which one it is.
+function activePaneInfo() {
+  for (const w of sessions) for (const p of w.panes) if (p.pane_id === activePane) return { ...p, wsLabel: w.label };
+  return null;
+}
+
+// Flags go on the *configured* command, so `ccpc --continue` works the same as
+// `claude --continue` — the wrapper is the thing the user actually runs.
+function ccVariant(flag) {
+  const base = (appSettings.agentCommand || 'claude').trim();
+  return /--(continue|resume)\b/.test(base) ? base : `${base} ${flag}`;
+}
+
+function ccRun(text) {
+  if (!activePane) return;
+  send({ type: 'submit', pane: activePane, text });
+  $('ccsheet').classList.remove('show');
+  setView('term');
+  jumpLive();
+}
+
+function ccKeys(keys) {
+  if (!activePane) return;
+  send({ type: 'key', pane: activePane, keys });
+  $('ccsheet').classList.remove('show');
+  setView('term');
+  jumpLive();
+}
+
+function ccSection(title, items) {
+  const wrap = document.createElement('div');
+  const h = document.createElement('div');
+  h.className = 'cchead';
+  h.textContent = title;
+  const grid = document.createElement('div');
+  grid.className = 'ccgrid';
+  for (const it of items) {
+    const b = document.createElement('div');
+    b.className = 'ccbtn' + (it.primary ? ' primary' : '');
+    b.textContent = it.label;
+    if (it.sub) {
+      const s = document.createElement('span');
+      s.className = 'sub';
+      s.textContent = it.sub;
+      b.appendChild(s);
+    }
+    b.addEventListener('mousedown', (e) => e.preventDefault());
+    b.addEventListener('click', it.run);
+    grid.appendChild(b);
+  }
+  wrap.append(h, grid);
+  return wrap;
+}
+
+function renderCcSheet() {
+  const p = activePaneInfo();
+  const body = $('cc-body');
+  body.replaceChildren();
+  $('cc-ctx').textContent = p
+    ? `${p.name || p.wsLabel || p.pane_id} · ${p.cwd || ''}`
+    : 'No pane selected.';
+  if (!p) { $('cc-hint').textContent = ''; return; }
+
+  if (!p.agent) {
+    const cmd = (appSettings.agentCommand || 'claude').trim();
+    const presets = (appSettings.agentCommandPresets || []).filter((c) => c && c.trim() !== cmd);
+    body.appendChild(ccSection('Start here', [
+      { label: cmd, sub: 'your command', primary: true, run: () => ccRun(cmd) },
+      { label: ccVariant('--continue'), sub: 'last session', run: () => ccRun(ccVariant('--continue')) },
+      { label: ccVariant('--resume'), sub: 'pick a session', run: () => ccRun(ccVariant('--resume')) },
+    ]));
+    if (presets.length) {
+      body.appendChild(ccSection('Other commands', presets.map((c) => ({ label: c, run: () => ccRun(c) }))));
+    }
+    $('cc-hint').textContent = 'Typed into this pane’s shell, so your aliases resolve. Set the default command in Settings.';
+    return;
+  }
+
+  // A running agent: the slash commands and the keys a phone keyboard has no
+  // way to produce.
+  body.appendChild(ccSection('Session', [
+    { label: '/model', run: () => ccRun('/model') },
+    { label: '/context', run: () => ccRun('/context') },
+    { label: '/compact', run: () => ccRun('/compact') },
+    { label: '/clear', run: () => ccRun('/clear') },
+    { label: '/cost', run: () => ccRun('/cost') },
+    { label: '/resume', run: () => ccRun('/resume') },
+  ]));
+  body.appendChild(ccSection('Control', [
+    { label: '⇧Tab', sub: 'cycle mode', run: () => ccKeys(['shift+tab']) },
+    { label: 'Esc Esc', sub: 'edit previous', run: () => ccKeys(['esc', 'esc']) },
+    { label: 'Esc', sub: 'interrupt', run: () => ccKeys(['esc']) },
+    // Two separate taps miss Claude's "press again" window; one send does not.
+    { label: '^C ^C', sub: 'quit agent', run: () => ccKeys(['ctrl+c', 'ctrl+c']) },
+  ]));
+  $('cc-hint').textContent = 'Slash commands are submitted to the agent in this pane.';
+}
+
+function openCcSheet() {
+  renderCcSheet();
+  $('ccsheet').classList.add('show');
+}
+$('cc-cancel').addEventListener('click', () => $('ccsheet').classList.remove('show'));
+$('ccsheet').addEventListener('click', (e) => { if (e.target === $('ccsheet')) $('ccsheet').classList.remove('show'); });
+$('cc-settings').addEventListener('click', () => { $('ccsheet').classList.remove('show'); openSettings(); });
+
 // ---------------------------------------------------------------------------
 // Directory picker — tap a directory instead of typing a path
 // ---------------------------------------------------------------------------
@@ -1074,13 +1208,14 @@ function renderPresets() {
     row.appendChild(chip);
   }
 }
-$('setbtn').addEventListener('click', async () => {
+async function openSettings() {
   await loadSettings();
   $('set-cmd').value = appSettings.agentCommand || '';
   $('set-cwd').value = appSettings.defaultCwd || '';
   renderPresets();
   $('setsheet').classList.add('show');
-});
+}
+$('setbtn').addEventListener('click', openSettings);
 $('set-cancel').addEventListener('click', () => $('setsheet').classList.remove('show'));
 $('setsheet').addEventListener('click', (e) => { if (e.target === $('setsheet')) $('setsheet').classList.remove('show'); });
 $('set-cmd').addEventListener('input', renderPresets);
