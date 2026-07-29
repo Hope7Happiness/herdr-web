@@ -138,6 +138,13 @@ The full empirical API recon that shaped this design:
 | `HERDR_WEB_BIND` | `127.0.0.1` | Listen address |
 | `HERDR_SOCKET_PATH` | `~/.config/herdr/herdr.sock` | herdr API socket |
 | `HERDR_WEB_CDP_PORT` | `9222` | Chrome DevTools endpoint used by Cast |
+| `HERDR_WEB_CONFIG_DIR` | `~/.config/herdr-web` | Where `settings.json` lives |
+
+Settings (the ⚙ button) are stored server-side in `settings.json`, so your
+phone and your laptop agree. The one that matters most is **agent command**:
+it is typed into the pane's *interactive shell* when a session starts an
+agent, so your own aliases and wrappers work — `ccpc`, `claude --continue`,
+`codex`, whatever you actually launch — not just binaries on PATH.
 
 Recommended herdr config (`~/.config/herdr/config.toml`) so headless panes
 get full width:

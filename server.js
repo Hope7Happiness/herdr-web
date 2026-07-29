@@ -11,6 +11,7 @@ const { parseAnsiScreen } = require('./lib/ansi');
 const { SizeDriver } = require('./lib/size-driver');
 const preview = require('./lib/preview');
 const cast = require('./lib/cast');
+const settings = require('./lib/settings');
 
 const sizeDriver = new SizeDriver();
 
@@ -239,6 +240,18 @@ app.delete('/api/workspaces/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Preview (Tier 1) and Cast (Tier 2)
 // ---------------------------------------------------------------------------
+
+app.get('/api/settings', (_req, res) => res.json(settings.load()));
+
+app.put('/api/settings', (req, res) => {
+  const patch = req.body || {};
+  if (patch.agentCommand !== undefined && typeof patch.agentCommand !== 'string') {
+    return res.status(400).json({ error: 'agentCommand must be a string' });
+  }
+  const saved = settings.save(patch);
+  jlog('info', 'settings-saved', { agentCommand: saved.agentCommand });
+  res.json(saved);
+});
 
 app.get('/api/ports', async (_req, res) => {
   res.json({ ports: await preview.listPorts(PORT) });

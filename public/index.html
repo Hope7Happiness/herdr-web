@@ -174,26 +174,30 @@
   }
 
   /* ---- new session sheet ---- */
-  #sheet {
+  #sheet, .sheet {
     position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 20;
   }
-  #sheet.show { display: flex; align-items: flex-end; }
-  #sheet .panel {
+  #sheet.show, .sheet.show { display: flex; align-items: flex-end; }
+  #sheet .panel, .sheet .panel {
     background: var(--bg2); border-radius: 16px 16px 0 0; width: 100%;
     padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
     display: flex; flex-direction: column; gap: 12px;
   }
-  #sheet h2 { font-size: 15px; font-weight: 600; }
-  #sheet input {
+  #sheet h2, .sheet h2 { font-size: 15px; font-weight: 600; }
+  .fld { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--fg-dim); }
+  .chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .hint { font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
+  .hint code { background: var(--bg3); padding: 1px 4px; border-radius: 4px; }
+  #sheet input, .sheet input {
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 12px; font-size: 15px; width: 100%;
   }
-  #sheet .actions { display: flex; gap: 10px; justify-content: flex-end; }
-  #sheet button {
+  #sheet .actions, .sheet .actions { display: flex; gap: 10px; justify-content: flex-end; }
+  #sheet button, .sheet button {
     padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--bg3); color: var(--fg); font-size: 14px; cursor: pointer;
   }
-  #sheet button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #sheet button.primary, .sheet button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 </style>
 </head>
 <body>
@@ -209,6 +213,9 @@
     </div>
     <div class="tab-btn" id="castbtn" title="Cast a real browser">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>
+    </div>
+    <div class="tab-btn" id="setbtn" title="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09c0 .66.39 1.26 1 1.51H21a2 2 0 1 1 0 4h-.09c-.61 0-1.21.25-1.51.9z"/></svg>
     </div>
     <div class="tab-btn" id="newbtn" title="New session">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -252,6 +259,24 @@
   </div>
 
   <div id="toast"></div>
+
+  <div id="setsheet" class="sheet">
+    <div class="panel">
+      <h2>Settings</h2>
+      <label class="fld">Agent command
+        <input id="set-cmd" placeholder="claude" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+      <div id="set-presets" class="chiprow"></div>
+      <p class="hint">Typed into the pane's interactive shell when a session starts an agent, so your own aliases work (<code>ccpc</code> and friends), not just binaries on PATH.</p>
+      <label class="fld">Default working directory
+        <input id="set-cwd" placeholder="(none)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+      <div class="actions">
+        <button id="set-cancel">Close</button>
+        <button id="set-save" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
 
   <div id="sheet">
     <div class="panel">
@@ -781,10 +806,53 @@ qkEl.appendChild(modelChip);
 // ---------------------------------------------------------------------------
 // New session sheet
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Settings — server-synced, so the phone and the laptop agree
+// ---------------------------------------------------------------------------
+let appSettings = { agentCommand: 'claude', agentCommandPresets: [], defaultCwd: '' };
+async function loadSettings() {
+  try { appSettings = await (await fetch('/api/settings')).json(); } catch { /* defaults */ }
+  return appSettings;
+}
+function renderPresets() {
+  const row = $('set-presets');
+  row.replaceChildren();
+  for (const c of appSettings.agentCommandPresets || []) {
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (c === $('set-cmd').value ? ' on' : '');
+    chip.textContent = c;
+    chip.addEventListener('click', () => { $('set-cmd').value = c; renderPresets(); });
+    row.appendChild(chip);
+  }
+}
+$('setbtn').addEventListener('click', async () => {
+  await loadSettings();
+  $('set-cmd').value = appSettings.agentCommand || '';
+  $('set-cwd').value = appSettings.defaultCwd || '';
+  renderPresets();
+  $('setsheet').classList.add('show');
+});
+$('set-cancel').addEventListener('click', () => $('setsheet').classList.remove('show'));
+$('setsheet').addEventListener('click', (e) => { if (e.target === $('setsheet')) $('setsheet').classList.remove('show'); });
+$('set-cmd').addEventListener('input', renderPresets);
+$('set-save').addEventListener('click', async () => {
+  const body = { agentCommand: $('set-cmd').value.trim() || 'claude', defaultCwd: $('set-cwd').value.trim() };
+  try {
+    appSettings = await (await fetch('/api/settings', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    })).json();
+  } catch { /* keep local copy */ }
+  $('setsheet').classList.remove('show');
+});
+loadSettings();
+
 $('newbtn').addEventListener('click', () => {
   // Fresh fields every open — stale values from an aborted attempt compound
   // into wrong paths (bit us in demo recording).
   for (const id of ['ns-cwd', 'ns-label', 'ns-cmd']) $(id).value = '';
+  // Prefill from settings so "new session" means "my usual agent, here".
+  $('ns-cmd').value = appSettings.agentCommand || '';
+  if (appSettings.defaultCwd) $('ns-cwd').value = appSettings.defaultCwd;
   $('sheet').classList.add('show');
 });
 $('ns-cancel').addEventListener('click', () => $('sheet').classList.remove('show'));
