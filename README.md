@@ -34,6 +34,8 @@ Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordinatio
   a running agent with `/model`, `/compact`, `/clear`, mode cycling and rewind.
 - **Directory picker** — `📁 cd` finds projects by zoxide frecency, git repos
   and open panes, so you never type a path on a phone.
+- **Text size you control** — `A−`/`A+` in the keys row; the pane's column
+  count follows the size, so the terminal fills the width at any of them.
 - **An integrated browser that isn't a pixel stream** — see below.
 - **PWA** — installable, no build step, three runtime dependencies.
 

@@ -327,6 +327,14 @@
       </label>
       <div id="set-presets" class="chiprow"></div>
       <p class="hint">Typed into the pane's interactive shell when a session starts an agent, so your own aliases work (<code>ccpc</code> and friends), not just binaries on PATH.</p>
+      <div class="fld">Text size <span style="color:var(--fg)" id="set-font-val"></span>
+        <div class="chiprow">
+          <button id="set-font-down" type="button">A−</button>
+          <button id="set-font-up" type="button">A+</button>
+          <button id="set-font-auto" type="button">Auto</button>
+        </div>
+      </div>
+      <p class="hint">Per device, so your phone and your laptop keep their own. The pane's column count follows the size — the terminal always fills the width.</p>
       <label class="fld">Default working directory
         <input id="set-cwd" placeholder="(none)" autocomplete="off" autocapitalize="off" spellcheck="false">
       </label>
@@ -543,6 +551,35 @@ function fitFont() {
   negotiateCols();
 }
 
+// Text size is a per-device preference — the phone and the laptop want
+// different answers — so it stays in localStorage rather than the
+// server-synced settings. Changing it re-derives the column count, so the pane
+// keeps filling the width exactly instead of leaving a gutter.
+function setFont(px) {
+  fontSize = Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(px)));
+  localStorage.setItem('herdr-web-font', String(fontSize));
+  applyFont();
+  if (atBottom) pinBottom();
+  negotiateCols();
+  syncFontUi();
+}
+function bumpFont(delta) { setFont((fontSize || TARGET_FONT) + delta); }
+function autoFont() {
+  fontSize = 0;
+  localStorage.removeItem('herdr-web-font');
+  applyFont();
+  if (atBottom) pinBottom();
+  negotiateCols();
+  syncFontUi();
+}
+function syncFontUi() {
+  const px = fontSize || TARGET_FONT;
+  fontDown.style.opacity = px <= FONT_MIN ? '.4' : '';
+  fontUp.style.opacity = px >= FONT_MAX ? '.4' : '';
+  const lbl = document.getElementById('set-font-val');
+  if (lbl) lbl.textContent = fontSize ? `${fontSize}px` : `${TARGET_FONT}px · auto`;
+}
+
 // How wide is a character REALLY, in the rows we are actually drawing? Box
 // drawing (─│└┘) falls back to a font whose glyphs are ~40% wider than ASCII
 // on Android, so a screen sized by ASCII either overflows on separator lines
@@ -564,7 +601,9 @@ function measuredAdvance() {
 
 let colsTimer = null;
 function negotiateCols() {
-  if (!wsOk || fontSize) return;
+  // Runs for a hand-picked font too: the size is the preference, the column
+  // count follows it, so the pane still fills the width exactly at any size.
+  if (!wsOk) return;
   const adv = measuredAdvance();
   if (!adv) return;
   const want = Math.floor((term.clientWidth - 8) / adv);
@@ -671,7 +710,11 @@ histBadge.addEventListener('click', scrollToLive);
 // ---------------------------------------------------------------------------
 // Viewport fit -> drive the herdr runtime size (tmux-web-style readable width)
 // ---------------------------------------------------------------------------
-const TARGET_FONT = 13;   // comfortable phone font; server resizes herdr to fit
+// 11px puts a character at ~6.8 CSS px, the same text density tmux-web reads at
+// on the same phone (its 12px xterm advance, measured side by side). The server
+// resizes herdr to whatever column count that works out to.
+const TARGET_FONT = 11;
+const FONT_MIN = 8, FONT_MAX = 22;
 const LINE_H = 1.25;
 // Measure in the terminal itself: a canvas measurement disagrees with what the
 // rows actually render at (font fallback, our fixed-width glyph cells), and the
@@ -982,6 +1025,10 @@ const cdChip = keyChip('\u{1F4C1} cd', 'qk', () => openDirPicker());
 const ccChip = keyChip('✳ CC', 'qk cc', openCcSheet);
 qkEl.insertBefore(cdChip, qkEl.firstChild?.nextSibling || null);
 qkEl.insertBefore(ccChip, cdChip);
+const fontDown = keyChip('A−', 'qk', () => bumpFont(-1));
+const fontUp = keyChip('A+', 'qk', () => bumpFont(+1));
+qkEl.insertBefore(fontDown, cdChip.nextSibling);
+qkEl.insertBefore(fontUp, fontDown.nextSibling);
 
 // ---------------------------------------------------------------------------
 // Claude Code menu — one parent chip, everything CC-specific behind it
@@ -1213,8 +1260,12 @@ async function openSettings() {
   $('set-cmd').value = appSettings.agentCommand || '';
   $('set-cwd').value = appSettings.defaultCwd || '';
   renderPresets();
+  syncFontUi();
   $('setsheet').classList.add('show');
 }
+$('set-font-down').addEventListener('click', () => bumpFont(-1));
+$('set-font-up').addEventListener('click', () => bumpFont(+1));
+$('set-font-auto').addEventListener('click', autoFont);
 $('setbtn').addEventListener('click', openSettings);
 $('set-cancel').addEventListener('click', () => $('setsheet').classList.remove('show'));
 $('setsheet').addEventListener('click', (e) => { if (e.target === $('setsheet')) $('setsheet').classList.remove('show'); });
