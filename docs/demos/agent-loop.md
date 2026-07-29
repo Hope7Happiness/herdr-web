@@ -5,7 +5,7 @@ the loop you drive.
 
 ## Desktop
 
-https://github.com/user-attachments/assets/6d83980b-b656-4a88-ad76-cca10dbcac41
+https://github.com/user-attachments/assets/dd98f18c-1566-491f-8662-281311ea9aac
 
 ## On a phone
 
@@ -13,7 +13,7 @@ Same loop, one screen at a time — you step back to the terminal to send the
 prompt and return to the cast with your control (and the collected errors)
 intact.
 
-https://github.com/user-attachments/assets/e8c81554-22e9-41b6-a728-a925fd5588ea
+https://github.com/user-attachments/assets/ba9ad8ec-0043-4080-bde1-26d876a73fe0
 
 ## What is happening
 

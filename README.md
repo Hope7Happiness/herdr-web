@@ -8,7 +8,7 @@ backed by herdr's persistent PTY sessions and its semantic agent states
 **[Watch the 40-second desktop demo →](docs/demos/desktop-browser.md)** — an
 agent restyling an app while you watch the real page repaint beside it.
 
-https://github.com/user-attachments/assets/19caaa1d-49de-4ec8-9549-90af1956c0bb
+https://github.com/user-attachments/assets/7062da6d-f65e-45e7-a695-1d6bbe116a03
 
 **Every demo, one page each: [docs/demos.md](docs/demos.md)** ·
 Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordination.md)

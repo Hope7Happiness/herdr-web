@@ -2,7 +2,7 @@
 
 The whole argument for herdr-web in 40 seconds.
 
-https://github.com/user-attachments/assets/19caaa1d-49de-4ec8-9549-90af1956c0bb
+https://github.com/user-attachments/assets/7062da6d-f65e-45e7-a695-1d6bbe116a03
 
 A terminal multiplexer can only show a web page as *pixels* — that is why
 terminal browser plugins stream JPEG frames into kitty-graphics or convert
