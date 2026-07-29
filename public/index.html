@@ -614,6 +614,7 @@ function negotiateCols() {
     const rows = Math.floor((term.clientHeight - 12) / (px * LINE_H));
     if (rows < 10) return;
     fitCols = want;
+    awaitingRewrap = true; // the next screen arrives re-wrapped; history must follow
     send({ type: 'resize', cols: want, rows });
   }, 500);
 }
@@ -669,6 +670,27 @@ function cutOverlap(recentRows, live) {
     }
     if (ok) return recentRows.slice(0, Math.max(0, i - s));
   }
+  // Row-for-row matching fails outright when the two reads were wrapped at
+  // different widths — every line breaks in a different place, so nothing is
+  // equal and the whole screen used to get duplicated above itself, which is
+  // what "the sentences are broken" looked like. Words survive re-wrapping, so
+  // fall back to finding the live screen's opening words in the history's word
+  // stream and cut there.
+  const words = [];
+  rt.forEach((t, i) => { for (const w of t.split(/\s+/)) if (w) words.push({ w, i }); });
+  const needle = [];
+  for (const t of lt.slice(s)) {
+    for (const w of t.split(/\s+/)) if (w) needle.push(w);
+    if (needle.length >= 8) break;
+  }
+  if (needle.length < 4) return recentRows;
+  for (let i = words.length - needle.length; i >= 0; i--) {
+    let ok = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (words[i + j].w !== needle[j]) { ok = false; break; }
+    }
+    if (ok) return recentRows.slice(0, words[i].i);
+  }
   return recentRows;
 }
 
@@ -678,6 +700,26 @@ function renderHist() {
   if (!atBottom || !lastRecent) return;
   renderInto(histEl, cutOverlap(lastRecent, liveRows));
   pinBottom();
+}
+
+// ...with one exception: after the runtime re-wraps, the frozen block is frozen
+// at a width that no longer exists, so it has to be re-read even mid-scroll.
+// Anchor the view to its distance from the bottom, since the line count changes
+// when the same text is re-wrapped.
+let awaitingRewrap = false;
+// The widest row is what the runtime wrapped at, so a change in it means the
+// two fetches disagree about width.
+function screenW(rows) {
+  let w = 0;
+  for (const r of rows) w = Math.max(w, rowText(r).replace(/\s+$/, '').length);
+  return w;
+}
+function renderHistRewrapped() {
+  if (!lastRecent) return;
+  const fromBottom = term.scrollHeight - term.scrollTop;
+  renderInto(histEl, cutOverlap(lastRecent, liveRows));
+  if (atBottom) pinBottom();
+  else term.scrollTop = Math.max(0, term.scrollHeight - fromBottom);
 }
 
 let histFetchTimer = null;
@@ -694,6 +736,13 @@ function onScreen(rows) {
   renderInto(liveEl, rows);
   fitFont();
   if (atBottom) pinBottom();
+  // This screen is the first one drawn at the new width, so the cached history
+  // above it is wrapped for the old one: re-read it now, whether or not we are
+  // pinned at the bottom.
+  if (awaitingRewrap) {
+    awaitingRewrap = false;
+    if (activePane) send({ type: 'scrollback', pane: activePane, lines: 500 });
+  }
   fetchHistSoon(); // keep the junction fresh as lines scroll out of the screen
 }
 
@@ -943,8 +992,11 @@ function connect() {
         break;
       case 'scrollback':
         if (m.pane === activePane) {
+          const stale = lastRecent && screenW(m.rows) !== screenW(lastRecent);
           lastRecent = m.rows;
-          renderHist(); // no-op while scrolled up — keeps reading position stable
+          // Normally a no-op while scrolled up, which keeps the reading position
+          // stable; but a re-wrapped history has to replace what is on screen.
+          if (stale) renderHistRewrapped(); else renderHist();
         }
         break;
       case 'agent_status': {
