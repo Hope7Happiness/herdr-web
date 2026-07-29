@@ -89,17 +89,21 @@
     overflow-anchor: none; /* we manage scroll position explicitly */
   }
   #term .row { white-space: pre; line-height: 1.25; min-height: 1.25em; }
-  /* Scrollback can hold rows from when the pane was far wider (a desktop
-     session, or before the runtime was resized). Wrap those instead of letting
-     them widen the whole view. */
-  #term .histblock .row { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* Box drawing falls back to a font whose glyphs are wider than the
+     monospace cell on Android. Squeeze a run of them back into exactly N
+     cells so every row has the same advance as ASCII — otherwise separator
+     lines dictate the column count and ordinary text under-fills the width. */
+  #term .gbox {
+    display: inline-block; white-space: pre; overflow: hidden;
+    transform-origin: left center; transform: scaleX(var(--boxscale, 0.72));
+  }
   #term .row span { white-space: pre; }
   .b { font-weight: 700; } .dim2 { opacity: 0.6; } .i { font-style: italic; }
   .u { text-decoration: underline; } .st { text-decoration: line-through; }
   /* Fixed-width cells for glyphs with font-dependent advance (spinner
      dingbats, symbols) — stops lines jumping as CC's spinner cycles. */
-  #term .g { display: inline-block; width: 1ch; text-align: center; overflow: hidden; vertical-align: bottom; }
-  #term .g2 { width: 2ch; }
+  #term .g { display: inline-block; width: var(--cellw, 1ch); text-align: center; overflow: hidden; vertical-align: bottom; }
+  #term .g2 { width: calc(var(--cellw, 1ch) * 2); }
   /* Always visible so the keys row never shifts; greyed when already live. */
   #livekey { color: var(--fg-dim); opacity: 0.55; }
   #livekey.show { color: var(--accent); border-color: var(--accent); opacity: 1; }
@@ -351,7 +355,8 @@ term.append(histEl, liveEl);
 // symbols…) has font-dependent width — as the spinner cycles glyphs, the
 // rest of the line visibly jumps left/right. Pin those chars into
 // fixed-width inline-block cells (1ch, or 2ch for East-Asian-wide/emoji).
-const MONO_SAFE = /^[\x20-\x7E─-▟]*$/;
+const MONO_SAFE = /^[\x20-\x7E]*$/;
+const BOX_CH = /[\u2500-\u259F]/;
 function charCells(cp) {
   return (
     (cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) ||
@@ -386,17 +391,54 @@ function appendLinkified(el, text) {
 
 function appendGlyphAware(el, text) {
   if (MONO_SAFE.test(text)) { el.appendChild(document.createTextNode(text)); return; }
-  let run = '';
+  let run = '', box = '';
+  const flushBox = () => {
+    if (!box) return;
+    const sp = document.createElement('span');
+    sp.className = 'gbox';
+    sp.style.width = `calc(var(--cellw, 1ch) * ${box.length})`;
+    sp.textContent = box;
+    el.appendChild(sp);
+    box = '';
+  };
   for (const ch of text) {
     const cp = ch.codePointAt(0);
-    if (cp >= 0x20 && cp <= 0x7E || (cp >= 0x2500 && cp <= 0x259F)) { run += ch; continue; }
+    if (cp >= 0x2500 && cp <= 0x259F) {
+      if (run) { el.appendChild(document.createTextNode(run)); run = ''; }
+      box += ch;
+      continue;
+    }
+    flushBox();
+    if (cp >= 0x20 && cp <= 0x7E) { run += ch; continue; }
     if (run) { el.appendChild(document.createTextNode(run)); run = ''; }
     const g = document.createElement('span');
     g.className = 'g' + (charCells(cp) === 2 ? ' g2' : '');
     g.textContent = ch;
     el.appendChild(g);
   }
+  flushBox();
   if (run) el.appendChild(document.createTextNode(run));
+}
+
+// How much wider is a box glyph than a monospace cell in THIS font? Measured,
+// because it is a fallback-font property we cannot assume.
+function calibrateBoxScale() {
+  const probe = document.createElement('div');
+  probe.className = 'row';
+  probe.style.cssText = 'position:absolute; visibility:hidden; white-space:pre; left:0; top:0;';
+  term.appendChild(probe);
+  probe.textContent = 'M'.repeat(50);
+  const ascii = probe.getBoundingClientRect().width / 50;
+  probe.textContent = '\u2500'.repeat(50);
+  const boxw = probe.getBoundingClientRect().width / 50;
+  probe.remove();
+  if (ascii > 0 && boxw > 0) {
+    // Every cell — plain text, pinned glyphs, squeezed box runs — is exactly
+    // one ASCII advance wide, so a row of N characters is always N cells and
+    // the negotiated column count fills the screen for text as well as art.
+    document.documentElement.style.setProperty('--cellw', ascii.toFixed(3) + 'px');
+    document.documentElement.style.setProperty('--boxscale', String(Math.min(1, ascii / boxw)));
+  }
 }
 
 function renderRow(spans) {
@@ -438,7 +480,8 @@ function renderInto(el, rows) {
 // what a character really costs, ask for that many columns — the pane then
 // fills the width exactly, with no gutter and nothing to scroll sideways.
 function applyFont() {
-  term.style.fontSize = (fontSize || TARGET_FONT) + 'px';
+  const px = (fontSize || TARGET_FONT) + 'px';
+  if (term.style.fontSize !== px) { term.style.fontSize = px; calibrateBoxScale(); }
 }
 function fitFont() {
   applyFont();
