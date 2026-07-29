@@ -12,6 +12,7 @@ const { SizeDriver } = require('./lib/size-driver');
 const preview = require('./lib/preview');
 const cast = require('./lib/cast');
 const settings = require('./lib/settings');
+const dirs = require('./lib/dirs');
 
 const sizeDriver = new SizeDriver();
 
@@ -240,6 +241,11 @@ app.delete('/api/workspaces/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Preview (Tier 1) and Cast (Tier 2)
 // ---------------------------------------------------------------------------
+
+app.get('/api/dirs', async (req, res) => {
+  const cwds = (state.snapshot?.panes || []).map((p) => p.foreground_cwd || p.cwd);
+  res.json({ dirs: await dirs.list(req.query.q, cwds) });
+});
 
 app.get('/api/settings', (_req, res) => res.json(settings.load()));
 

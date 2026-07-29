@@ -195,6 +195,20 @@
   .fld { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--fg-dim); }
   .chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
   .hint { font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
+  #dir-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .dirrow {
+    display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px;
+    background: var(--bg3); border: 1px solid var(--border); cursor: pointer;
+  }
+  .dirrow .p { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .dirrow .name { font-size: 13px; font-weight: 600; }
+  .dirrow .parent { font-size: 10px; color: var(--fg-dim); font-family: ui-monospace, monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dirrow .src { font-size: 10px; color: var(--fg-dim); flex: none; }
+  .dirrow .new {
+    flex: none; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--border);
+    color: var(--fg-dim); font-size: 11px;
+  }
   .hint code { background: var(--bg3); padding: 1px 4px; border-radius: 4px; }
   #sheet input, .sheet input {
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
@@ -268,6 +282,16 @@
 
   <div id="toast"></div>
 
+  <div id="dirsheet" class="sheet">
+    <div class="panel">
+      <h2>Go to directory</h2>
+      <input id="dir-q" placeholder="Search projects…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div id="dir-list"></div>
+      <p class="hint" id="dir-hint"></p>
+      <div class="actions"><button id="dir-cancel">Close</button></div>
+    </div>
+  </div>
+
   <div id="setsheet" class="sheet">
     <div class="panel">
       <h2>Settings</h2>
@@ -289,7 +313,10 @@
   <div id="sheet">
     <div class="panel">
       <h2>New session</h2>
-      <input id="ns-cwd" placeholder="Working directory (e.g. ~/projects/…)">
+      <div style="display:flex; gap:6px;">
+        <input id="ns-cwd" placeholder="Working directory (e.g. ~/projects/…)">
+        <button id="ns-browse" type="button">Browse</button>
+      </div>
       <input id="ns-label" placeholder="Label (optional)">
       <input id="ns-cmd" placeholder="Command (optional, e.g. claude)">
       <div class="actions">
@@ -913,6 +940,16 @@ for (const [label, keys] of QUICK_KEYS) {
   qkEl.appendChild(b);
 }
 // /model chip sends text
+const cdChip = document.createElement('div');
+cdChip.className = 'qk';
+cdChip.textContent = '\u{1F4C1} cd';
+cdChip.tabIndex = -1;
+cdChip.addEventListener('mousedown', (e) => e.preventDefault());
+cdChip.addEventListener('click', () => openDirPicker());
+// Front of the row: the keys strip scrolls, and a control you cannot see is a
+// control you do not have (learned the same lesson on the cast chips).
+qkEl.insertBefore(cdChip, qkEl.firstChild?.nextSibling || null);
+
 const modelChip = document.createElement('div');
 modelChip.className = 'qk';
 modelChip.textContent = '/model';
@@ -924,6 +961,100 @@ qkEl.appendChild(modelChip);
 // ---------------------------------------------------------------------------
 // New session sheet
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Directory picker — tap a directory instead of typing a path
+// ---------------------------------------------------------------------------
+let dirPickTarget = null; // null = act on the pane; 'new-session' = fill the sheet
+let dirTimer = null;
+
+function activePaneHasAgent() {
+  for (const w of sessions) for (const p of w.panes) if (p.pane_id === activePane) return !!p.agent;
+  return false;
+}
+
+async function loadDirs() {
+  const q = $('dir-q').value.trim();
+  let list = [];
+  try { list = (await (await fetch('/api/dirs?q=' + encodeURIComponent(q))).json()).dirs || []; } catch { /* ignore */ }
+  const box = $('dir-list');
+  box.replaceChildren();
+  for (const d of list) {
+    const row = document.createElement('div');
+    row.className = 'dirrow';
+    // Name first, parent underneath: on a phone the basename is what you are
+    // looking for, and a truncated absolute path is unreadable either way.
+    const p = document.createElement('div');
+    p.className = 'p';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = d.display.replace(/\/$/, '').split('/').pop() || d.display;
+    const parent = document.createElement('div');
+    parent.className = 'parent';
+    parent.textContent = d.display.replace(/\/[^/]*\/?$/, '') || '/';
+    p.append(name, parent);
+    const src = document.createElement('span');
+    src.className = 'src';
+    src.textContent = d.source === 'open' ? 'open' : d.source === 'repo' ? 'repo' : '';
+    row.append(p, src);
+    if (!dirPickTarget) {
+      const nb = document.createElement('span');
+      nb.className = 'new';
+      nb.textContent = '+ session';
+      nb.addEventListener('click', (e) => { e.stopPropagation(); newSessionAt(d.path); });
+      row.appendChild(nb);
+    }
+    row.addEventListener('click', () => choosePath(d.path));
+    box.appendChild(row);
+  }
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'hint';
+    empty.textContent = 'No matching directory.';
+    box.appendChild(empty);
+  }
+}
+
+function choosePath(p) {
+  if (dirPickTarget === 'new-session') {
+    $('ns-cwd').value = p;
+    $('dirsheet').classList.remove('show');
+    return;
+  }
+  // cd only makes sense in a shell; a pane running an agent gets a new session
+  // instead of a `cd` typed into the agent's prompt.
+  if (activePaneHasAgent()) { newSessionAt(p); return; }
+  send({ type: 'submit', pane: activePane, text: `cd ${p}` });
+  $('dirsheet').classList.remove('show');
+  setView('term');
+  jumpLive();
+}
+
+async function newSessionAt(cwd) {
+  $('dirsheet').classList.remove('show');
+  const res = await fetch('/api/workspaces', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cwd, command: appSettings.agentCommand || undefined }),
+  });
+  const data = await res.json();
+  if (data.root_pane) selectPane(data.root_pane.pane_id);
+}
+
+function openDirPicker(target = null) {
+  dirPickTarget = target;
+  $('dir-q').value = '';
+  $('dir-hint').textContent = target === 'new-session'
+    ? 'Tap a directory to use it for the new session.'
+    : (activePaneHasAgent()
+      ? 'This pane runs an agent, so tapping starts a new session there.'
+      : 'Tap to cd this pane · “+ session” starts a new one there.');
+  $('dirsheet').classList.add('show');
+  loadDirs();
+  setTimeout(() => $('dir-q').focus(), 120);
+}
+$('dir-cancel').addEventListener('click', () => $('dirsheet').classList.remove('show'));
+$('dirsheet').addEventListener('click', (e) => { if (e.target === $('dirsheet')) $('dirsheet').classList.remove('show'); });
+$('dir-q').addEventListener('input', () => { clearTimeout(dirTimer); dirTimer = setTimeout(loadDirs, 160); });
+
 // ---------------------------------------------------------------------------
 // Settings — server-synced, so the phone and the laptop agree
 // ---------------------------------------------------------------------------
@@ -973,6 +1104,7 @@ $('newbtn').addEventListener('click', () => {
   if (appSettings.defaultCwd) $('ns-cwd').value = appSettings.defaultCwd;
   $('sheet').classList.add('show');
 });
+$('ns-browse').addEventListener('click', () => openDirPicker('new-session'));
 $('ns-cancel').addEventListener('click', () => $('sheet').classList.remove('show'));
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) $('sheet').classList.remove('show'); });
 $('ns-create').addEventListener('click', async () => {
