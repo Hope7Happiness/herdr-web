@@ -423,18 +423,37 @@ function renderInto(el, rows) {
   el.replaceChildren(frag);
 }
 
+// Widest line ever seen for this pane. Sizing to the CURRENT screen is wrong:
+// a screen that happens to hold short lines picks a big font, and the next
+// full-width frame then overflows and the view scrolls sideways.
+let seenCols = 0;
 function fitFont(rows) {
   if (fontSize) { term.style.fontSize = fontSize + 'px'; return; }
-  let cols = 0;
   for (const r of rows) {
     let n = 0;
     for (const s of r) n += s.t.length;
-    if (n > cols) cols = n;
+    if (n > seenCols) seenCols = n;
   }
-  cols = Math.max(cols, 40);
+  // The width we asked the backend for is the real target; the running max
+  // covers the case where the runtime is wider than we asked (e.g. no
+  // node-pty, so it stays at herdr's 80-column default).
+  const cols = Math.max(seenCols, fitCols || 0, 40);
   // monospace advance ≈ 0.602em for common mono fonts
   const px = Math.floor((term.clientWidth - 8) / (cols * 0.602));
   term.style.fontSize = Math.max(7, Math.min(16, px)) + 'px';
+  shrinkToFit();
+}
+
+// Belt and braces: whatever the arithmetic says, if the rendered rows are
+// wider than the box, step the font down until they are not. Fonts round,
+// glyph advances vary — measurement is the only thing that cannot be wrong.
+function shrinkToFit() {
+  if (fontSize) return;
+  for (let i = 0; i < 8; i++) {
+    const px = parseFloat(term.style.fontSize) || 13;
+    if (term.scrollWidth <= term.clientWidth + 1 || px <= 7) break;
+    term.style.fontSize = (px - 1) + 'px';
+  }
 }
 
 function scrollToLive() {
@@ -521,12 +540,13 @@ function measureCharW(px) {
   return c.measureText('MMMMMMMMMM').width / 10;
 }
 let maxInnerH = window.innerHeight;
+let fitCols = 0;
 function sendFit() {
   if (!wsOk) return;
   const charW = measureCharW(TARGET_FONT);
   const cols = Math.floor((term.clientWidth - 8) / charW);
   const rows = Math.floor((term.clientHeight - 12) / (TARGET_FONT * LINE_H));
-  if (cols >= 20 && rows >= 10) send({ type: 'resize', cols, rows });
+  if (cols >= 20 && rows >= 10) { fitCols = cols; send({ type: 'resize', cols, rows }); }
 }
 
 // Keyboard open/close resizes the layout — keep the live tail in view.
@@ -681,6 +701,7 @@ function selectPane(paneId) {
   histBadge.classList.remove('show');
   liveRows = [];
   lastRecent = null;
+  seenCols = 0; // different pane, different width
   histEl.replaceChildren();
   liveEl.replaceChildren();
   renderTabs();
