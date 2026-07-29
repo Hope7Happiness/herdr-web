@@ -89,6 +89,10 @@
     overflow-anchor: none; /* we manage scroll position explicitly */
   }
   #term .row { white-space: pre; line-height: 1.25; min-height: 1.25em; }
+  /* Scrollback can hold rows from when the pane was far wider (a desktop
+     session, or before the runtime was resized). Wrap those instead of letting
+     them widen the whole view. */
+  #term .histblock .row { white-space: pre-wrap; overflow-wrap: anywhere; }
   #term .row span { white-space: pre; }
   .b { font-weight: 700; } .dim2 { opacity: 0.6; } .i { font-style: italic; }
   .u { text-decoration: underline; } .st { text-decoration: line-through; }
@@ -335,6 +339,7 @@ let fontSize = +(localStorage.getItem('herdr-web-font') || 0); // 0 = auto
 // below. Scrolling into history is plain native scrolling — zero fetches on
 // gesture (the fetch-on-swipe design stalled visibly on the phone).
 const histEl = document.createElement('div');
+histEl.className = 'histblock';
 const liveEl = document.createElement('div');
 term.append(histEl, liveEl);
 
@@ -426,32 +431,69 @@ function renderInto(el, rows) {
 // Widest line ever seen for this pane. Sizing to the CURRENT screen is wrong:
 // a screen that happens to hold short lines picks a big font, and the next
 // full-width frame then overflows and the view scrolls sideways.
-let seenCols = 0;
-function fitFont(rows) {
-  if (fontSize) { term.style.fontSize = fontSize + 'px'; return; }
-  for (const r of rows) {
-    let n = 0;
-    for (const s of r) n += s.t.length;
-    if (n > seenCols) seenCols = n;
-  }
-  // The width we asked the backend for is the real target; the running max
-  // covers the case where the runtime is wider than we asked (e.g. no
-  // node-pty, so it stays at herdr's 80-column default).
-  const cols = Math.max(seenCols, fitCols || 0, 40);
-  // monospace advance ≈ 0.602em for common mono fonts
-  const px = Math.floor((term.clientWidth - 8) / (cols * 0.602));
-  term.style.fontSize = Math.max(7, Math.min(16, px)) + 'px';
-  shrinkToFit();
+// Sizing is ONE-DIRECTIONAL: the font is a preference, and the backend's
+// column count is derived from it. Deriving the font from content made a short
+// screen pick a huge font; deriving columns from a font we then changed made
+// the two chase each other until they hit the floor. Pick the font, measure
+// what a character really costs, ask for that many columns — the pane then
+// fills the width exactly, with no gutter and nothing to scroll sideways.
+function applyFont() {
+  term.style.fontSize = (fontSize || TARGET_FONT) + 'px';
 }
+function fitFont() {
+  applyFont();
+  shrinkToFit();
+  negotiateCols();
+}
+
+// How wide is a character REALLY, in the rows we are actually drawing? Box
+// drawing (─│└┘) falls back to a font whose glyphs are ~40% wider than ASCII
+// on Android, so a screen sized by ASCII either overflows on separator lines
+// or, once the font shrinks to fit them, leaves text under-filling the width.
+// Measure the worst case and let the backend give us that many columns; the
+// font stays put, so this converges instead of chasing itself.
+function measuredAdvance() {
+  let worst = 0;
+  for (const r of liveEl.children) {
+    const len = r.textContent.replace(/\s+$/, '').length;
+    if (len < 8) continue;
+    let w = 0;
+    for (const sp of r.children) w += sp.getBoundingClientRect().width;
+    if (!w) continue;
+    worst = Math.max(worst, w / len);
+  }
+  return worst;
+}
+
+let colsTimer = null;
+function negotiateCols() {
+  if (!wsOk || fontSize) return;
+  const adv = measuredAdvance();
+  if (!adv) return;
+  const want = Math.floor((term.clientWidth - 8) / adv);
+  if (want < 20 || Math.abs(want - (fitCols || 0)) < 2) return;
+  clearTimeout(colsTimer);
+  colsTimer = setTimeout(() => {
+    const px = parseFloat(term.style.fontSize) || TARGET_FONT;
+    const rows = Math.floor((term.clientHeight - 12) / (px * LINE_H));
+    if (rows < 10) return;
+    fitCols = want;
+    send({ type: 'resize', cols: want, rows });
+  }, 500);
+}
+
 
 // Belt and braces: whatever the arithmetic says, if the rendered rows are
 // wider than the box, step the font down until they are not. Fonts round,
 // glyph advances vary — measurement is the only thing that cannot be wrong.
+// Safety net only: if the runtime is wider than we asked (no node-pty, so it
+// stays at herdr's 80-column default), shrink so nothing scrolls sideways.
 function shrinkToFit() {
   if (fontSize) return;
+  const widest = () => Math.max(0, ...[...liveEl.children].map((r) => r.scrollWidth));
   for (let i = 0; i < 8; i++) {
-    const px = parseFloat(term.style.fontSize) || 13;
-    if (term.scrollWidth <= term.clientWidth + 1 || px <= 7) break;
+    const px = parseFloat(term.style.fontSize) || TARGET_FONT;
+    if (widest() <= term.clientWidth - 6 || px <= 7) break;
     term.style.fontSize = (px - 1) + 'px';
   }
 }
@@ -514,7 +556,7 @@ function fetchHistSoon(delay = 1500) {
 function onScreen(rows) {
   liveRows = rows;
   renderInto(liveEl, rows);
-  fitFont(rows);
+  fitFont();
   if (atBottom) pinBottom();
   fetchHistSoon(); // keep the junction fresh as lines scroll out of the screen
 }
@@ -534,18 +576,31 @@ histBadge.addEventListener('click', scrollToLive);
 // ---------------------------------------------------------------------------
 const TARGET_FONT = 13;   // comfortable phone font; server resizes herdr to fit
 const LINE_H = 1.25;
+// Measure in the terminal itself: a canvas measurement disagrees with what the
+// rows actually render at (font fallback, our fixed-width glyph cells), and the
+// disagreement is what made the earlier fit loop diverge.
 function measureCharW(px) {
-  const c = measureCharW._ctx || (measureCharW._ctx = document.createElement('canvas').getContext('2d'));
-  c.font = `${px}px 'Cascadia Mono', 'Roboto Mono', ui-monospace, monospace`;
-  return c.measureText('MMMMMMMMMM').width / 10;
+  let probe = document.getElementById('charprobe');
+  if (!probe) {
+    probe = document.createElement('div');
+    probe.id = 'charprobe';
+    probe.className = 'row';
+    probe.style.cssText = 'position:absolute; visibility:hidden; white-space:pre; left:0; top:0;';
+    probe.textContent = 'M'.repeat(50);
+    term.appendChild(probe);
+  }
+  probe.style.fontSize = px + 'px';
+  return probe.getBoundingClientRect().width / 50 || px * 0.602;
 }
 let maxInnerH = window.innerHeight;
 let fitCols = 0;
 function sendFit() {
   if (!wsOk) return;
-  const charW = measureCharW(TARGET_FONT);
+  const px = fontSize || TARGET_FONT;
+  applyFont();
+  const charW = measureCharW(px);
   const cols = Math.floor((term.clientWidth - 8) / charW);
-  const rows = Math.floor((term.clientHeight - 12) / (TARGET_FONT * LINE_H));
+  const rows = Math.floor((term.clientHeight - 12) / (px * LINE_H));
   if (cols >= 20 && rows >= 10) { fitCols = cols; send({ type: 'resize', cols, rows }); }
 }
 
@@ -701,7 +756,6 @@ function selectPane(paneId) {
   histBadge.classList.remove('show');
   liveRows = [];
   lastRecent = null;
-  seenCols = 0; // different pane, different width
   histEl.replaceChildren();
   liveEl.replaceChildren();
   renderTabs();
