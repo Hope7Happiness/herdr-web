@@ -6,8 +6,8 @@
 > cross-origin WebSocket protection, security headers, tests, and macOS-safe
 > plugin startup.
 
-Mobile-first web UI for the [herdr](https://herdr.dev) agent multiplexer —
-view and drive your coding agents (Claude Code first) from a phone browser,
+Minimal, Codex-first web UI for the [herdr](https://herdr.dev) agent multiplexer —
+view and drive coding agents from a phone browser,
 backed by herdr's persistent PTY sessions and its semantic agent states
 (idle / working / blocked / done).
 
@@ -27,57 +27,33 @@ Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordinatio
 - **Agent-status tabs** — herdr's killer feature, front and center: one tab
   per pane with a colored state dot (working / blocked / done / idle),
   sorted by attention.
-- **Never miss an approval**: blocked agents raise a toast in-app and a
-  system notification when the app is in the background; a bell chip cycles
-  you through everything that needs you. "Done while you weren't looking"
-  is tracked as unseen until you view it (synced with herdr's own seen state).
+- **Attention queue**: blocked agents raise an in-app toast and a bell chip
+  cycles through everything that needs you. "Done while you weren't looking"
+  stays unseen until you view it.
 - **Smooth scrollback** — history is prefetched above the live screen in one
   scroll container; swiping into the past is plain native scrolling.
 - **Quick keys + input** — Esc, Tab, ⇧Tab, Ctrl-C, arrows, Enter; text
   submits atomically via herdr's `agent.prompt` (no half-pasted prompts).
-- **A Claude Code menu** — one `✳ CC` chip that knows what the pane is: launch
-  your configured command (`ccpc`, `claude --continue`, …) in a shell, or drive
-  a running agent with `/model`, `/compact`, `/clear`, mode cycling and rewind.
 - **Directory picker** — `📁 cd` finds projects by zoxide frecency, git repos
   and open panes, so you never type a path on a phone.
-- **Text size you control** — `A−`/`A+` in the keys row changes only that
-  browser; terminal rows keep filling the available width.
-- **An integrated browser that isn't a pixel stream** — see below.
-- **PWA** — installable, no build step, three runtime dependencies.
+- **New Codex sessions** — create a pane in a selected project with `codex` as
+  the default command; the command remains configurable for aliases and flags.
+- **Local web preview** — open a discovered dev-server port or tap a localhost
+  URL in agent output.
 
-## The integrated browser
+## Local web preview
 
-A terminal can only *show pictures of* a web page — hence the ingenious
-kitty-graphics/chafa pipelines other herdr browser plugins need. herdr-web
-is already a browser, so it can skip that entirely:
-
-**Preview (default).** The bridge reverse-proxies a local dev server under
+The bridge reverse-proxies a local dev server under
 this same origin and shows it in an iframe, so you get the **real page** —
 selectable text, native pinch-zoom and momentum scroll, a real keyboard,
 forms and file pickers. Bandwidth is the app's own assets, not JPEG frames
 of them. Two side effects worth having: your plain-HTTP dev server inherits
 the bridge's HTTPS, and no dev port needs its own tunnel. Ports are
-discovered automatically and ranked dev-server-first, and any
-`http://localhost:PORT` in agent output is a tap target — no modifier key.
-
-**Cast (fallback, and for watching agents).** For pages that refuse framing,
-need your logged-in session, or are simply remote, herdr-web attaches to a
-Chrome DevTools endpoint (`HERDR_WEB_CDP_PORT`, default 9222 — i.e. the
-browser your agent automates) and streams `Page.startScreencast` frames.
-Because the sink is a browser rather than a terminal, frames land in an
-`<img>` with no cell quantization, taps and drags map straight onto page
-pixels as real `Input` events, and the cast page is *reflowed to your phone*
-via a device-metrics override — reverted on detach, so an agent's browser is
-never left resized behind its back.
-
-**Takeover, page-errors→agent and the element picker** turn the cast into part
-of the loop: watch the agent browse, take control when you need to, send the
-page's real console errors into the prompt, and tap an element to aim your next
-instruction at it — see [the agent-loop demo](docs/demos/agent-loop.md).
+discovered automatically on Linux and macOS and ranked dev-server-first. Any
+`http://localhost:PORT` in agent output is also a tap target.
 
 Demos: [desktop, side by side](docs/demos/desktop-browser.md) ·
-[preview on a phone](docs/demos/preview-tap.md) ·
-[cast a real Chrome](docs/demos/cast-browser.md).
+[preview on a phone](docs/demos/preview-tap.md).
 
 ## Install
 
@@ -108,8 +84,7 @@ The server deliberately binds `127.0.0.1` only — **it grants full terminal
 control of every pane with no auth**. Expose it through something that
 handles transport security for you:
 
-- **Tailscale** (recommended): use the lifecycle commands below. HTTPS also
-  unlocks notifications and PWA install.
+- **Tailscale** (recommended): use the lifecycle commands below.
 - Any authenticated reverse proxy works the same way.
 - `HERDR_WEB_BIND=0.0.0.0` exists if you really know what you're doing.
 
@@ -170,14 +145,14 @@ the local bridge.
 ## How it works
 
 ```
- phone browser (PWA)
+ phone browser
    │ ▲ screens/agent-states (WebSocket) · keys, prompts (WS/HTTP)
    ▼ │
  herdr-web bridge :7930
    server.js ── lib/ansi.js (ANSI → locally wrapped DOM rows)
    │            lib/size-driver.js (optional shared PTY resize)
    ▼  JSON socket (session.snapshot, events, agent.prompt, keys)
- herdr daemon ──▶ PTY panes (Claude Code agents, …)
+ herdr daemon ──▶ PTY panes (Codex agents, …)
 ```
 
 herdr's server owns the PTYs and already runs a full terminal emulator, so
@@ -193,8 +168,8 @@ come from pushed `pane.agent_status_changed` events.
 A terminal process has one real PTY geometry, so two clients cannot get native
 TUI reflow at different widths from the same process. By default, herdr-web
 leaves that geometry entirely under the desktop Herdr client and wraps the
-rendered rows locally in each browser. Phone rotation and font controls
-therefore never resize the computer terminal.
+rendered rows locally in each browser. Phone rotation therefore never resizes
+the computer terminal.
 
 The old native-reflow approach remains available as an explicit compatibility
 mode:
@@ -216,7 +191,6 @@ The full empirical API recon that shaped this design:
 | `HERDR_WEB_PORT` | `7930` | HTTP/WS port |
 | `HERDR_WEB_BIND` | `127.0.0.1` | Listen address |
 | `HERDR_SOCKET_PATH` | `~/.config/herdr/herdr.sock` | herdr API socket |
-| `HERDR_WEB_CDP_PORT` | `9222` | Chrome DevTools endpoint used by Cast |
 | `HERDR_WEB_CONFIG_DIR` | `~/.config/herdr-web` | Where `settings.json` lives |
 | `HERDR_WEB_TAILSCALE_HTTPS_PORT` | `17930` | Private Tailscale Serve HTTPS port |
 | `HERDR_WEB_ALLOWED_HOSTS` | empty | Extra comma-separated reverse-proxy hostnames |
@@ -226,8 +200,7 @@ The full empirical API recon that shaped this design:
 Settings (the ⚙ button) are stored server-side in `settings.json`, so your
 phone and your laptop agree. The one that matters most is **agent command**:
 it is typed into the pane's *interactive shell* when a session starts an
-agent, so your own aliases and wrappers work — `ccpc`, `claude --continue`,
-`codex`, whatever you actually launch — not just binaries on PATH.
+agent, so Codex aliases and flags work just like a direct shell launch.
 
 Recommended herdr config (`~/.config/herdr/config.toml`) so headless panes
 get full width:

@@ -13,7 +13,6 @@ const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({
   viewport: { width: 1280, height: 800 },
   recordVideo: { dir: OUT, size: { width: 1280, height: 800 } },
-  serviceWorkers: 'block',
 });
 const page = await ctx.newPage();
 await page.goto(URL + '?_t=' + Date.now(), { waitUntil: 'networkidle' });

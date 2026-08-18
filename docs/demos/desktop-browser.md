@@ -23,9 +23,6 @@ What happens in the clip:
    for a colour change; the agent edits `styles.css`; the dev server's
    live-reload stream (SSE, proxied through the bridge) repaints the right
    pane green. Edit-to-visible-result without touching the browser.
-5. **Cast mode** takes over the same pane for anything the proxy cannot frame —
-   a real Chrome, streamed and drivable.
-
 Why it is better than a terminal screencast: crisp native text instead of
 quantised cells, real scroll/zoom/selection/keyboard, the app's own bandwidth
 instead of a video stream, and — because the proxy runs under the bridge's

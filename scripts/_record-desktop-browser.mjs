@@ -14,7 +14,6 @@ const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({
   viewport: { width: 1280, height: 800 },
   recordVideo: { dir: OUT, size: { width: 1280, height: 800 } },
-  serviceWorkers: 'block',
 });
 const page = await ctx.newPage();
 const marks = {};
@@ -64,14 +63,6 @@ while (Date.now() < deadline && !green) {
 }
 mark('green');
 await page.waitForTimeout(3500);
-
-// 6. Cast: the same pane can host a real Chrome for anything the proxy cannot frame.
-await page.click('#castbtn');
-await page.waitForTimeout(6500);
-mark('cast');
-await page.mouse.move(960, 500);
-for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, 320); await page.waitForTimeout(600); }
-await page.waitForTimeout(2500);
 
 await ctx.close();
 await browser.close();

@@ -6,9 +6,7 @@
      so the flex column compresses and the terminal stays visible above the
      input (default resizes-visual pans the page and hides the terminal). -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content">
-<meta name="theme-color" content="#0d1117">
 <title>herdr-web</title>
-<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
   :root {
@@ -84,7 +82,7 @@
   #term {
     height: 100%; overflow-y: auto; overflow-x: hidden;
     font-family: 'Cascadia Mono', 'Roboto Mono', ui-monospace, monospace;
-    font-variant-ligatures: none; letter-spacing: 0; tab-size: 8;
+    font-size: 11px; font-variant-ligatures: none; letter-spacing: 0; tab-size: 8;
     padding: 6px 4px; overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
     overflow-anchor: none; /* we manage scroll position explicitly */
@@ -109,7 +107,7 @@
   .b { font-weight: 700; } .dim2 { opacity: 0.6; } .i { font-style: italic; }
   .u { text-decoration: underline; } .st { text-decoration: line-through; }
   /* Fixed-width cells for glyphs with font-dependent advance (spinner
-     dingbats, symbols) — stops lines jumping as CC's spinner cycles. */
+     dingbats, symbols) — stops lines jumping as agent spinners cycle. */
   #term .g { display: inline-block; width: var(--cellw, 1ch); text-align: center; overflow: hidden; vertical-align: bottom; }
   #term .g2 { width: calc(var(--cellw, 1ch) * 2); }
   /* Always visible so the keys row never shifts; greyed when already live. */
@@ -120,16 +118,16 @@
     align-items: center; justify-content: center; color: var(--fg-dim); font-size: 14px;
   }
 
-  /* ---- preview / cast views ---- */
-  #preview, #cast { position: absolute; inset: 0; display: none; flex-direction: column; background: var(--bg); }
-  #preview.show, #cast.show { display: flex; }
+  /* ---- local web preview ---- */
+  #preview { position: absolute; inset: 0; display: none; flex-direction: column; background: var(--bg); }
+  #preview.show { display: flex; }
 
   /* On a wide screen there is room for both: the agent keeps working on the
      left while the real page it is building lives on the right. */
   @media (min-width: 900px) {
     #termwrap.split { display: flex; }
     #termwrap.split #term { width: 50%; height: 100%; }
-    #termwrap.split #preview.show, #termwrap.split #cast.show {
+    #termwrap.split #preview.show {
       position: relative; inset: auto; width: 50%; border-left: 1px solid var(--border);
     }
   }
@@ -147,19 +145,9 @@
   .chip.on { border-color: var(--accent); color: var(--accent); }
   .chip .sub { color: var(--fg-dim); font-size: 10px; margin-left: 4px; }
   #pvframe { flex: 1; border: 0; width: 100%; background: #fff; }
-  #casthost { flex: 1; position: relative; overflow: hidden; background: #000; touch-action: none; }
-  #castimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-  #casthint, #pvhint {
+  #pvhint {
     position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
     text-align: center; color: var(--fg-dim); font-size: 13px; padding: 0 24px; line-height: 1.6;
-  }
-  #castinput {
-    flex: none; display: flex; gap: 6px; padding: 6px 8px; background: var(--bg2);
-    border-top: 1px solid var(--border);
-  }
-  #castinput input {
-    flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-    border-radius: 8px; padding: 8px 10px; font-size: 15px; outline: none;
   }
   .row-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
 
@@ -175,9 +163,6 @@
     cursor: pointer; user-select: none; font-family: ui-monospace, monospace;
   }
   .qk:active { background: #2c3440; }
-  /* The one chip that opens everything Claude-Code-specific reads as a place to
-     go, not another key to press. */
-  .qk.cc { background: rgba(88,166,255,.14); border-color: rgba(88,166,255,.5); color: #9ecbff; }
   #inputrow { display: flex; gap: 8px; padding: 7px 8px 9px; align-items: flex-end; }
   #msg {
     flex: 1; min-height: 40px; max-height: 120px; resize: none;
@@ -204,7 +189,6 @@
   }
   #sheet h2, .sheet h2 { font-size: 15px; font-weight: 600; }
   .fld { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--fg-dim); }
-  .chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
   .hint { font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
   #dir-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
   .dirrow {
@@ -221,17 +205,6 @@
     color: var(--fg-dim); font-size: 11px;
   }
   .hint code { background: var(--bg3); padding: 1px 4px; border-radius: 4px; }
-  /* ---- Claude Code sheet ---- */
-  .cchead { font-size: 10px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .07em; }
-  .ccgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 6px; }
-  .ccbtn {
-    padding: 10px 8px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border);
-    color: var(--fg); font-size: 13px; text-align: center; cursor: pointer; user-select: none;
-    font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .ccbtn:active { background: #2c3440; }
-  .ccbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; grid-column: 1 / -1; }
-  .ccbtn .sub { display: block; font-size: 10px; opacity: .75; margin-top: 3px; font-family: system-ui, sans-serif; }
   #sheet input, .sheet input {
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 12px; font-size: 15px; width: 100%;
@@ -255,9 +228,6 @@
     <div class="tab-btn" id="pvbtn" title="Preview a local port">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>
     </div>
-    <div class="tab-btn" id="castbtn" title="Cast a real browser">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>
-    </div>
     <div class="tab-btn" id="setbtn" title="Settings">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09c0 .66.39 1.26 1 1.51H21a2 2 0 1 1 0 4h-.09c-.61 0-1.21.25-1.51.9z"/></svg>
     </div>
@@ -275,17 +245,6 @@
       <div id="pvhint">Pick a local port above to preview it here.<br>Runs through this origin, so it gets HTTPS too.</div>
     </div>
 
-    <div id="cast">
-      <div class="vbar" id="castbar"></div>
-      <div id="casthost">
-        <img id="castimg" alt="browser cast">
-        <div id="casthint">Attach to a Chrome DevTools endpoint to watch (and drive) a real browser — including the one your agent is automating.</div>
-      </div>
-      <div id="castinput">
-        <input id="casturl" placeholder="Type here → sends to the page · or a URL to navigate" autocomplete="off" autocapitalize="off" spellcheck="false">
-        <button class="chip" id="castgo">Go</button>
-      </div>
-    </div>
     <div id="empty">
       <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><line x1="12" y1="15" x2="17" y2="15"/></svg>
       <div>No session selected</div>
@@ -304,19 +263,6 @@
 
   <div id="toast"></div>
 
-  <div id="ccsheet" class="sheet">
-    <div class="panel">
-      <h2>Claude Code</h2>
-      <p class="hint" id="cc-ctx"></p>
-      <div id="cc-body" style="display:flex; flex-direction:column; gap:10px;"></div>
-      <p class="hint" id="cc-hint"></p>
-      <div class="actions">
-        <button id="cc-settings">Settings</button>
-        <button id="cc-cancel">Close</button>
-      </div>
-    </div>
-  </div>
-
   <div id="dirsheet" class="sheet">
     <div class="panel">
       <h2>Go to directory</h2>
@@ -331,18 +277,9 @@
     <div class="panel">
       <h2>Settings</h2>
       <label class="fld">Agent command
-        <input id="set-cmd" placeholder="claude" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <input id="set-cmd" placeholder="codex" autocomplete="off" autocapitalize="off" spellcheck="false">
       </label>
-      <div id="set-presets" class="chiprow"></div>
-      <p class="hint">Typed into the pane's interactive shell when a session starts an agent, so your own aliases work (<code>ccpc</code> and friends), not just binaries on PATH.</p>
-      <div class="fld">Text size <span style="color:var(--fg)" id="set-font-val"></span>
-        <div class="chiprow">
-          <button id="set-font-down" type="button">A−</button>
-          <button id="set-font-up" type="button">A+</button>
-          <button id="set-font-auto" type="button">Auto</button>
-        </div>
-      </div>
-      <p class="hint">Per device. By default the browser wraps rows locally, so changing phone size never resizes the desktop terminal.</p>
+      <p class="hint">Typed into the pane's interactive shell when a session starts, so aliases and Codex flags work.</p>
       <label class="fld">Default working directory
         <input id="set-cwd" placeholder="(none)" autocomplete="off" autocapitalize="off" spellcheck="false">
       </label>
@@ -361,7 +298,7 @@
         <button id="ns-browse" type="button">Browse</button>
       </div>
       <input id="ns-label" placeholder="Label (optional)">
-      <input id="ns-cmd" placeholder="Command (optional, e.g. claude)">
+      <input id="ns-cmd" placeholder="Command (optional, e.g. codex)">
       <div class="actions">
         <button id="ns-cancel">Cancel</button>
         <button id="ns-create" class="primary">Create</button>
@@ -407,7 +344,6 @@ let activePane = localStorage.getItem('herdr-web-pane') || null;
 let liveRows = [];          // last live screen rows
 let lastRecent = null;      // last scrollback fetch — rendered ABOVE the live block
 let atBottom = true;        // view pinned to the live tail
-let fontSize = +(localStorage.getItem('herdr-web-font') || 0); // 0 = auto
 let sharedRuntimeResize = false;
 
 // One scroll container, two blocks: prefetched history above, live screen
@@ -422,12 +358,11 @@ term.append(histEl, liveEl);
 // Rendering
 // ---------------------------------------------------------------------------
 // Glyphs the monospace font renders at exactly 1 cell: ASCII + box drawing
-// + block elements. Everything else (CC's spinner dingbats ✻✳✶, emoji,
+// + block elements. Everything else (agent spinner dingbats ✻✳✶, emoji,
 // symbols…) has font-dependent width — as the spinner cycles glyphs, the
 // rest of the line visibly jumps left/right. Pin those chars into
 // fixed-width inline-block cells (1ch, or 2ch for East-Asian-wide/emoji).
 const MONO_SAFE = /^[\x20-\x7E]*$/;
-const BOX_CH = /[\u2500-\u259F]/;
 function charCells(cp) {
   return (
     (cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) ||
@@ -556,39 +491,11 @@ function renderInto(el, rows) {
   el.replaceChildren(frag);
 }
 
-// Font size is a local preference. Independent mode lets CSS wrap the source
-// grid at that size; shared resize mode derives one PTY column count from it.
-function applyFont() {
-  const px = (fontSize || TARGET_FONT) + 'px';
-  if (term.style.fontSize !== px) { term.style.fontSize = px; calibrateBoxScale(); }
-}
+let glyphsCalibrated = false;
 function fitFont() {
-  applyFont();
-}
-
-// Text size is a per-device preference — the phone and the laptop want
-// different answers — so it stays in localStorage rather than server settings.
-function setFont(px) {
-  fontSize = Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(px)));
-  localStorage.setItem('herdr-web-font', String(fontSize));
-  applyFont();
-  if (atBottom) pinBottom();
-  syncFontUi();
-}
-function bumpFont(delta) { setFont((fontSize || TARGET_FONT) + delta); }
-function autoFont() {
-  fontSize = 0;
-  localStorage.removeItem('herdr-web-font');
-  applyFont();
-  if (atBottom) pinBottom();
-  syncFontUi();
-}
-function syncFontUi() {
-  const px = fontSize || TARGET_FONT;
-  fontDown.style.opacity = px <= FONT_MIN ? '.4' : '';
-  fontUp.style.opacity = px >= FONT_MAX ? '.4' : '';
-  const lbl = document.getElementById('set-font-val');
-  if (lbl) lbl.textContent = fontSize ? `${fontSize}px` : `${TARGET_FONT}px · auto`;
+  if (glyphsCalibrated) return;
+  calibrateBoxScale();
+  glyphsCalibrated = true;
 }
 
 function scrollToLive() {
@@ -718,7 +625,6 @@ histBadge.addEventListener('click', scrollToLive);
 // 11px puts a character at ~6.8 CSS px. Independent mode wraps locally at this
 // density; the server is contacted only when shared runtime resize is enabled.
 const TARGET_FONT = 11;
-const FONT_MIN = 8, FONT_MAX = 22;
 const LINE_H = 1.25;
 // Measure in the terminal itself: a canvas measurement disagrees with what the
 // rows actually render at (font fallback, our fixed-width glyph cells), and the
@@ -740,8 +646,7 @@ let maxInnerH = window.innerHeight;
 let fitCols = 0;
 function sendFit() {
   if (!wsOk || !sharedRuntimeResize) return;
-  const px = fontSize || TARGET_FONT;
-  applyFont();
+  const px = TARGET_FONT;
   const charW = measureCharW(px);
   const cols = Math.floor((term.clientWidth - 8) / charW);
   const rows = Math.floor((term.clientHeight - 12) / (px * LINE_H));
@@ -843,8 +748,8 @@ $('attn').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Attention notifications — the herdr thing people love: a blocked approval
-// request never idles unnoticed in the background.
+// In-app attention notices. The persistent bell and status ordering retain
+// anything missed while this minimal page was not visible.
 // ---------------------------------------------------------------------------
 function paneName(p, w) {
   return (p.agent ? `${p.agent} · ` : '') + w.label;
@@ -862,13 +767,9 @@ function onStatusTransition(p, w, prev, next) {
 }
 function notifyAttention(p, w, what, urgent) {
   const title = `${paneName(p, w)} ${what}`;
-  if (document.visibilityState === 'visible') {
-    if (p.pane_id !== activePane || what !== 'needs your input') showToast(title, p.pane_id, urgent);
-  } else if (Notification.permission === 'granted') {
-    navigator.serviceWorker?.ready.then((reg) => reg.showNotification('herdr-web', {
-      body: title, tag: `herdr-${p.pane_id}`, data: { pane: p.pane_id },
-      icon: 'icon-192.png', badge: 'icon-192.png',
-    })).catch(() => {});
+  if (document.visibilityState === 'visible' &&
+      (p.pane_id !== activePane || what !== 'needs your input')) {
+    showToast(title, p.pane_id, urgent);
   }
 }
 let toastTimer = null, toastPane = null;
@@ -885,20 +786,9 @@ $('toast').addEventListener('click', () => {
   $('toast').classList.remove('show');
   if (toastPane) selectPane(toastPane);
 });
-// System notifications need permission from a user gesture; ask lazily on
-// pane taps until answered (no latch — a suppressed prompt would eat it).
-function maybeAskNotifPermission() {
-  if (!('Notification' in window) || Notification.permission !== 'default') return;
-  Notification.requestPermission().catch(() => {});
-}
-navigator.serviceWorker?.addEventListener('message', (e) => {
-  if (e.data?.pane) selectPane(e.data.pane);
-});
-
 function selectPane(paneId) {
   activePane = paneId;
   if (paneId) markSeen(paneId);
-  maybeAskNotifPermission();
   localStorage.setItem('herdr-web-pane', paneId || '');
   atBottom = true;
   histBadge.classList.remove('show');
@@ -1037,129 +927,10 @@ function keyChip(label, cls, onClick) {
   b.addEventListener('click', onClick);
   return b;
 }
-// Front of the row: the keys strip scrolls, and a control you cannot see is a
-// control you do not have (learned the same lesson on the cast chips). The two
-// chips that open something go first, ahead of the raw keys.
+// Keep directory selection at the front; typing paths is the biggest source
+// of avoidable friction on a phone.
 const cdChip = keyChip('\u{1F4C1} cd', 'qk', () => openDirPicker());
-const ccChip = keyChip('✳ CC', 'qk cc', openCcSheet);
 qkEl.insertBefore(cdChip, qkEl.firstChild?.nextSibling || null);
-qkEl.insertBefore(ccChip, cdChip);
-const fontDown = keyChip('A−', 'qk', () => bumpFont(-1));
-const fontUp = keyChip('A+', 'qk', () => bumpFont(+1));
-qkEl.insertBefore(fontDown, cdChip.nextSibling);
-qkEl.insertBefore(fontUp, fontDown.nextSibling);
-
-// ---------------------------------------------------------------------------
-// Claude Code menu — one parent chip, everything CC-specific behind it
-// ---------------------------------------------------------------------------
-// Two different panes wear the same UI here: a shell you want to *launch* an
-// agent in, and a running agent you want to *steer*. Showing both sets at once
-// would be twice the buttons and half of them wrong, so the sheet asks the pane
-// which one it is.
-function activePaneInfo() {
-  for (const w of sessions) for (const p of w.panes) if (p.pane_id === activePane) return { ...p, wsLabel: w.label };
-  return null;
-}
-
-// Flags go on the *configured* command, so `ccpc --continue` works the same as
-// `claude --continue` — the wrapper is the thing the user actually runs.
-function ccVariant(flag) {
-  const base = (appSettings.agentCommand || 'claude').trim();
-  return /--(continue|resume)\b/.test(base) ? base : `${base} ${flag}`;
-}
-
-function ccRun(text) {
-  if (!activePane) return;
-  send({ type: 'submit', pane: activePane, text });
-  $('ccsheet').classList.remove('show');
-  setView('term');
-  jumpLive();
-}
-
-function ccKeys(keys) {
-  if (!activePane) return;
-  send({ type: 'key', pane: activePane, keys });
-  $('ccsheet').classList.remove('show');
-  setView('term');
-  jumpLive();
-}
-
-function ccSection(title, items) {
-  const wrap = document.createElement('div');
-  const h = document.createElement('div');
-  h.className = 'cchead';
-  h.textContent = title;
-  const grid = document.createElement('div');
-  grid.className = 'ccgrid';
-  for (const it of items) {
-    const b = document.createElement('div');
-    b.className = 'ccbtn' + (it.primary ? ' primary' : '');
-    b.textContent = it.label;
-    if (it.sub) {
-      const s = document.createElement('span');
-      s.className = 'sub';
-      s.textContent = it.sub;
-      b.appendChild(s);
-    }
-    b.addEventListener('mousedown', (e) => e.preventDefault());
-    b.addEventListener('click', it.run);
-    grid.appendChild(b);
-  }
-  wrap.append(h, grid);
-  return wrap;
-}
-
-function renderCcSheet() {
-  const p = activePaneInfo();
-  const body = $('cc-body');
-  body.replaceChildren();
-  $('cc-ctx').textContent = p
-    ? `${p.name || p.wsLabel || p.pane_id} · ${p.cwd || ''}`
-    : 'No pane selected.';
-  if (!p) { $('cc-hint').textContent = ''; return; }
-
-  if (!p.agent) {
-    const cmd = (appSettings.agentCommand || 'claude').trim();
-    const presets = (appSettings.agentCommandPresets || []).filter((c) => c && c.trim() !== cmd);
-    body.appendChild(ccSection('Start here', [
-      { label: cmd, sub: 'your command', primary: true, run: () => ccRun(cmd) },
-      { label: ccVariant('--continue'), sub: 'last session', run: () => ccRun(ccVariant('--continue')) },
-      { label: ccVariant('--resume'), sub: 'pick a session', run: () => ccRun(ccVariant('--resume')) },
-    ]));
-    if (presets.length) {
-      body.appendChild(ccSection('Other commands', presets.map((c) => ({ label: c, run: () => ccRun(c) }))));
-    }
-    $('cc-hint').textContent = 'Typed into this pane’s shell, so your aliases resolve. Set the default command in Settings.';
-    return;
-  }
-
-  // A running agent: the slash commands and the keys a phone keyboard has no
-  // way to produce.
-  body.appendChild(ccSection('Session', [
-    { label: '/model', run: () => ccRun('/model') },
-    { label: '/context', run: () => ccRun('/context') },
-    { label: '/compact', run: () => ccRun('/compact') },
-    { label: '/clear', run: () => ccRun('/clear') },
-    { label: '/cost', run: () => ccRun('/cost') },
-    { label: '/resume', run: () => ccRun('/resume') },
-  ]));
-  body.appendChild(ccSection('Control', [
-    { label: '⇧Tab', sub: 'cycle mode', run: () => ccKeys(['shift+tab']) },
-    { label: 'Esc Esc', sub: 'edit previous', run: () => ccKeys(['esc', 'esc']) },
-    { label: 'Esc', sub: 'interrupt', run: () => ccKeys(['esc']) },
-    // Two separate taps miss Claude's "press again" window; one send does not.
-    { label: '^C ^C', sub: 'quit agent', run: () => ccKeys(['ctrl+c', 'ctrl+c']) },
-  ]));
-  $('cc-hint').textContent = 'Slash commands are submitted to the agent in this pane.';
-}
-
-function openCcSheet() {
-  renderCcSheet();
-  $('ccsheet').classList.add('show');
-}
-$('cc-cancel').addEventListener('click', () => $('ccsheet').classList.remove('show'));
-$('ccsheet').addEventListener('click', (e) => { if (e.target === $('ccsheet')) $('ccsheet').classList.remove('show'); });
-$('cc-settings').addEventListener('click', () => { $('ccsheet').classList.remove('show'); openSettings(); });
 
 // ---------------------------------------------------------------------------
 // Directory picker — tap a directory instead of typing a path
@@ -1258,39 +1029,22 @@ $('dir-q').addEventListener('input', () => { clearTimeout(dirTimer); dirTimer = 
 // ---------------------------------------------------------------------------
 // Settings — server-synced, so the phone and the laptop agree
 // ---------------------------------------------------------------------------
-let appSettings = { agentCommand: 'claude', agentCommandPresets: [], defaultCwd: '' };
+let appSettings = { agentCommand: 'codex', defaultCwd: '' };
 async function loadSettings() {
   try { appSettings = await (await fetch('/api/settings')).json(); } catch { /* defaults */ }
   return appSettings;
-}
-function renderPresets() {
-  const row = $('set-presets');
-  row.replaceChildren();
-  for (const c of appSettings.agentCommandPresets || []) {
-    const chip = document.createElement('div');
-    chip.className = 'chip' + (c === $('set-cmd').value ? ' on' : '');
-    chip.textContent = c;
-    chip.addEventListener('click', () => { $('set-cmd').value = c; renderPresets(); });
-    row.appendChild(chip);
-  }
 }
 async function openSettings() {
   await loadSettings();
   $('set-cmd').value = appSettings.agentCommand || '';
   $('set-cwd').value = appSettings.defaultCwd || '';
-  renderPresets();
-  syncFontUi();
   $('setsheet').classList.add('show');
 }
-$('set-font-down').addEventListener('click', () => bumpFont(-1));
-$('set-font-up').addEventListener('click', () => bumpFont(+1));
-$('set-font-auto').addEventListener('click', autoFont);
 $('setbtn').addEventListener('click', openSettings);
 $('set-cancel').addEventListener('click', () => $('setsheet').classList.remove('show'));
 $('setsheet').addEventListener('click', (e) => { if (e.target === $('setsheet')) $('setsheet').classList.remove('show'); });
-$('set-cmd').addEventListener('input', renderPresets);
 $('set-save').addEventListener('click', async () => {
-  const body = { agentCommand: $('set-cmd').value.trim() || 'claude', defaultCwd: $('set-cwd').value.trim() };
+  const body = { agentCommand: $('set-cmd').value.trim() || 'codex', defaultCwd: $('set-cwd').value.trim() };
   try {
     appSettings = await (await fetch('/api/settings', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -1338,7 +1092,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Views: terminal · preview (Tier 1) · cast (Tier 2)
+// Views: terminal · local web preview
 // ---------------------------------------------------------------------------
 let view = 'term';
 const SPLIT_MIN = 900;
@@ -1347,17 +1101,9 @@ function setView(v) {
   view = v;
   const split = v !== 'term' && isSplit();
   $('preview').classList.toggle('show', v === 'preview');
-  $('cast').classList.toggle('show', v === 'cast');
   $('termwrap').classList.toggle('split', split);
   $('pvbtn').style.color = v === 'preview' ? 'var(--accent)' : '';
-  $('castbtn').style.color = v === 'cast' ? 'var(--accent)' : '';
-  // Keep the agent's input reachable whenever the terminal is on screen.
   $('footer').style.display = (v === 'term' || split) ? '' : 'none';
-  // Leaving the cast view must NOT drop the session: on a phone you step back
-  // to the terminal to send a prompt, and losing takeover (and the collected
-  // errors) every time you do that makes the whole loop unusable. Pause the
-  // frames instead — state lives on until you detach or switch target.
-  castSend({ type: v === 'cast' ? 'resume' : 'pause' });
   if ((v === 'term' || split) && atBottom) pinBottom();
   if (split) setTimeout(sendFit, 350); // terminal is narrower now
 }
@@ -1417,252 +1163,6 @@ async function selectPort(port, path = '/') {
 }
 $('pvbtn').addEventListener('click', () => (view === 'preview' ? setView('term') : openPreview(pvPort)));
 
-// ---- cast ----------------------------------------------------------------
-let castWs = null, castNat = { w: 0, h: 0 };
-function stopCast() { try { castWs?.close(); } catch { /* ignore */ } castWs = null; }
-async function openCast() {
-  setView('cast');
-  const bar = $('castbar');
-  bar.replaceChildren();
-  let data = { targets: [] };
-  try { data = await (await fetch('/api/cast/targets')).json(); } catch { /* ignore */ }
-  if (data.error || !data.targets?.length) {
-    const c = document.createElement('div');
-    c.className = 'chip';
-    c.textContent = `no CDP pages on :${data.cdpPort || 9222}`;
-    bar.appendChild(c);
-    return;
-  }
-  for (const t of data.targets) {
-    const c = document.createElement('div');
-    c.className = 'chip';
-    const label = (t.title || t.url || '').slice(0, 28) || 'page';
-    c.textContent = label;
-    c.addEventListener('click', () => {
-      [...bar.children].forEach((x) => x.classList.remove('on'));
-      c.classList.add('on');
-      attachCast(t.id);
-    });
-    bar.appendChild(c);
-  }
-  // Controls come before context, and the labels shrink on a phone: this bar
-  // scrolls, and a chip you cannot see is a chip you do not have.
-  castErrChip = document.createElement('div');
-  castErrChip.className = 'chip';
-  castErrChip.style.display = 'none';
-  castErrChip.addEventListener('click', sendErrorsToAgent);
-
-  // Takeover / hand-back. Watching is the default: the agent may be driving
-  // this browser, and stray taps from a pocket would fight it.
-  castModeChip = document.createElement('div');
-  castModeChip.className = 'chip';
-  castModeChip.addEventListener('click', () => setCastMode(castMode === 'control' ? 'watch' : 'control'));
-
-  // Element picker → agent prompt.
-  castPickChip = document.createElement('div');
-  castPickChip.className = 'chip';
-  castPickChip.textContent = castNarrow() ? '⌖ pick' : 'pick element';
-  castPickChip.addEventListener('click', () => setPickMode(!castPick));
-
-  const fit = document.createElement('div');
-  fit.className = 'chip' + (castFit ? ' on' : '');
-  fit.textContent = castNarrow() ? 'fit' : 'fit to phone';
-  fit.addEventListener('click', () => { castFit = !castFit; fit.classList.toggle('on', castFit); sendViewport(); });
-
-  bar.prepend(castErrChip, castModeChip, castPickChip, fit);
-  renderCastMode();
-  bar.firstChild.classList.add('on');
-  attachCast(data.targets[0].id);
-}
-
-let castMode = 'watch', castPick = false, castErrors = [];
-let castModeChip = null, castPickChip = null, castErrChip = null;
-function castNarrow() { return window.innerWidth < 560; }
-function setCastMode(mode) {
-  castMode = mode;
-  if (mode !== 'control') setPickMode(false);
-  castSend({ type: 'mode', mode });
-  renderCastMode();
-}
-function setPickMode(on) {
-  castPick = on;
-  castPickChip?.classList.toggle('on', on);
-  $('casthost').style.cursor = on ? 'crosshair' : '';
-  renderCastMode();
-}
-function renderCastMode() {
-  if (!castModeChip) return;
-  const control = castMode === 'control';
-  castModeChip.textContent = castNarrow()
-    ? (control ? '✋ control' : '👁 watch')
-    : (control ? '✋ you have control' : '👁 watching');
-  castModeChip.classList.toggle('on', control);
-  $('casthint').style.display = (control || castErrors.length) ? 'none' : '';
-  if (!control) {
-    $('casthint').textContent = castPick
-      ? 'Tap an element to send it to the agent.'
-      : 'Watching the agent’s browser. Tap “you have control” to take over, then hand it back the same way.';
-    $('casthint').style.display = castNat.w ? 'none' : '';
-  }
-}
-function renderCastErrors() {
-  if (!castErrChip) return;
-  const n = castErrors.length;
-  castErrChip.style.display = n ? '' : 'none';
-  castErrChip.textContent = castNarrow()
-    ? `⚠ ${n} → agent`
-    : `⚠ ${n} page error${n === 1 ? '' : 's'} → agent`;
-  castErrChip.classList.toggle('on', n > 0);
-  if (!n) return;
-  // Errors are the most time-critical chip in the bar, and the bar scrolls:
-  // put it first and bring it into view, or it appears past the right edge
-  // exactly when you need it.
-  const bar = $('castbar');
-  if (bar.firstChild !== castErrChip) bar.prepend(castErrChip);
-  castErrChip.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-}
-// Compose a report and drop it in the agent prompt — filled, not sent, so you
-// see what goes to the agent before it does.
-function sendErrorsToAgent() {
-  if (!castErrors.length || !activePane) return;
-  const url = document.getElementById('casturlchip')?.textContent || 'the page';
-  const lines = castErrors.slice(0, 8).map((e, i) =>
-    `${i + 1}. [${e.kind}] ${e.text}${e.where ? ` (${e.where})` : ''}`);
-  msg.value = `The page ${url} is logging these errors:\n${lines.join('\n')}\n\nFind and fix the cause.`;
-  msg.style.height = 'auto';
-  msg.style.height = Math.min(msg.scrollHeight, 120) + 'px';
-  if (!isSplit()) setView('term');
-  msg.focus();
-}
-let castFit = true;
-// Live URL of the cast page — the target's title goes stale the moment you
-// navigate, which is exactly when you want to know where you are.
-function castUrlChip() {
-  let c = document.getElementById('casturlchip');
-  if (!c) {
-    c = document.createElement('div');
-    c.id = 'casturlchip';
-    c.className = 'chip on';
-    $('castbar').insertBefore(c, $('castbar').firstChild);
-  }
-  return c;
-}
-function sendViewport() {
-  const r = $('casthost').getBoundingClientRect();
-  castSend({ type: 'viewport', fit: castFit, w: r.width, h: r.height, dpr: Math.min(devicePixelRatio || 2, 2) });
-}
-function attachCast(targetId) {
-  stopCast();
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  castWs = new WebSocket(`${proto}://${location.host}/cast?target=${encodeURIComponent(targetId)}`);
-  castWs.onopen = () => setTimeout(sendViewport, 400);
-  castWs.onmessage = (ev) => {
-    const m = JSON.parse(ev.data);
-    if (m.type === 'frame') {
-      castNat = { w: m.w, h: m.h };
-      $('castimg').src = 'data:image/jpeg;base64,' + m.data;
-      $('casthint').style.display = 'none';
-    } else if (m.type === 'meta') {
-      castUrlChip().textContent = (m.url || '').replace(/^https?:\/\//, '').slice(0, 34) || '—';
-    } else if (m.type === 'errors') {
-      castErrors = m.errors || [];
-      renderCastErrors();
-    } else if (m.type === 'mode') {
-      castMode = m.mode;
-      renderCastMode();
-    } else if (m.type === 'picked') {
-      onPicked(m);
-    } else if (m.type === 'blocked') {
-      $('casthint').textContent = 'Watching — tap “you have control” to interact.';
-      $('casthint').style.display = '';
-      setTimeout(() => renderCastMode(), 1600);
-    } else if (m.type === 'error') {
-      $('casthint').textContent = m.error;
-      $('casthint').style.display = '';
-    }
-  };
-  castWs.onclose = () => { if (view === 'cast') $('casthint').style.display = ''; };
-}
-function castSend(o) { if (castWs?.readyState === 1) castWs.send(JSON.stringify(o)); }
-// A picked element becomes the subject of your next prompt: the selector and
-// its text go in the box, you type what you want done to it.
-function onPicked(m) {
-  setPickMode(false);
-  if (m.error) { $('casthint').textContent = m.error; $('casthint').style.display = ''; return; }
-  const label = m.text ? ` — "${m.text}"` : '';
-  msg.value = `In the app, the element \`${m.selector}\` (<${m.tag}>${label}): `;
-  msg.style.height = 'auto';
-  msg.style.height = Math.min(msg.scrollHeight, 120) + 'px';
-  if (!isSplit()) setView('term');
-  msg.focus();
-}
-// Map a tap on the letterboxed <img> back to page pixels.
-function castPoint(e) {
-  const img = $('castimg');
-  const r = img.getBoundingClientRect();
-  if (!castNat.w || !castNat.h) return null;
-  const scale = Math.min(r.width / castNat.w, r.height / castNat.h);
-  const dw = castNat.w * scale, dh = castNat.h * scale;
-  const x = (e.clientX - r.left - (r.width - dw) / 2) / scale;
-  const y = (e.clientY - r.top - (r.height - dh) / 2) / scale;
-  if (x < 0 || y < 0 || x > castNat.w || y > castNat.h) return null;
-  return { x: Math.round(x), y: Math.round(y) };
-}
-let castDrag = null;
-$('casthost').addEventListener('touchstart', (e) => {
-  const p = castPoint(e.touches[0]);
-  castDrag = p ? { ...p, t: Date.now(), moved: 0 } : null;
-}, { passive: true });
-$('casthost').addEventListener('touchmove', (e) => {
-  if (!castDrag) return;
-  const p = castPoint(e.touches[0]);
-  if (!p) return;
-  const dy = castDrag.y - p.y;
-  castDrag.moved += Math.abs(dy);
-  if (Math.abs(dy) > 1) { castSend({ type: 'scroll', x: p.x, y: p.y, dy }); castDrag.y = p.y; }
-}, { passive: true });
-$('casthost').addEventListener('touchend', () => {
-  if (castDrag && castDrag.moved < 8 && Date.now() - castDrag.t < 500) {
-    castTap(castDrag.x, castDrag.y);
-  }
-  castDrag = null;
-});
-$('casthost').addEventListener('click', (e) => {
-  if (e.pointerType === 'touch' || !castNat.w) return;
-  const p = castPoint(e);
-  if (p) castTap(p.x, p.y);
-});
-// One tap, two meanings: pick the element, or click it.
-function castTap(x, y) {
-  castSend(castPick ? { type: 'pick', x, y } : { type: 'mouse', action: 'click', x, y });
-}
-$('casthost').addEventListener('wheel', (e) => {
-  const p = castPoint(e);
-  if (p) castSend({ type: 'scroll', ...p, dy: e.deltaY });
-}, { passive: true });
-$('castbtn').addEventListener('click', () => {
-  if (view === 'cast') { setView('term'); return; }
-  // A live session keeps its mode, errors and target — just show it again.
-  if (castWs?.readyState === 1) { setView('cast'); return; }
-  openCast();
-});
-$('castgo').addEventListener('mousedown', (e) => e.preventDefault());
-$('castgo').addEventListener('click', castSubmit);
-$('casturl').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); castSubmit(); } });
-function castSubmit() {
-  const v = $('casturl').value.trim();
-  if (!v) { castSend({ type: 'key', key: 'Enter' }); return; }
-  if (/^https?:\/\//.test(v) || /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(v) || /^localhost(:\d+)?/.test(v)) {
-    castSend({ type: 'navigate', url: /^https?:\/\//.test(v) ? v : 'http://' + v });
-  } else {
-    castSend({ type: 'text', text: v });
-    castSend({ type: 'key', key: 'Enter' });
-  }
-  $('casturl').value = '';
-}
-
-// PWA service worker
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
 </body>
 </html>

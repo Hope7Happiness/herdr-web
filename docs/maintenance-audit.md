@@ -5,8 +5,8 @@ Audit date: 2026-08-18
 ## Verdict
 
 The upstream project is a strong prototype and a useful base for continued
-development. Its core terminal, agent-state, prompt, preview, cast, and PWA
-flows work. It is not production-mature yet: the code was young, had no CI or
+development. Its core terminal, agent-state, prompt, and preview flows work.
+It is not production-mature yet: the code was young, had no CI or
 unit tests, delegated all authorization to the network perimeter, and had
 macOS/plugin-path failures in its phone-width driver.
 
@@ -24,6 +24,8 @@ multi-user service.
   406px of the 414px viewport after padding.
 - Independent sizing test: opening the mobile view leaves five live pane grids
   unchanged at 170–172 source columns while the browser wraps locally.
+- Minimal Codex-first UI: Claude-specific actions, font controls, browser Cast,
+  and PWA assets are intentionally removed; macOS Preview discovery uses lsof.
 - Tailscale 1.98.5: private HTTPS Serve on `:17930`, HTTPS 200, WSS session
   connection, status/doctor/off/restart lifecycle, and preservation of an
   unrelated Funnel route on `:443`.
@@ -60,8 +62,8 @@ multi-user service.
   legacy shared resizing remains opt-in.
 - Herdr's protocol is pre-1.0. Compatibility tests should cover every supported
   Herdr release before upgrading the minimum version.
-- Preview and Chrome Cast intentionally grant broad control over trusted local
-  development services. They need a separate threat-model pass before any
+- Preview intentionally grants broad control over trusted local development
+  services. It needs a separate threat-model pass before any
   multi-user deployment.
 - Workspace/tab/pane creation and layout controls do not yet match the desktop
   TUI feature-for-feature.

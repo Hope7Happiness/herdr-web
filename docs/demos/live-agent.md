@@ -1,6 +1,6 @@
-# Prompt a live agent
+# Prompt a live Codex agent
 
-Type to Claude Code from a phone and watch the answer stream in.
+Type to Codex from a phone and watch the answer stream in.
 
 https://github.com/user-attachments/assets/7441eba1-a791-437f-8f01-788bee9f55e1
 

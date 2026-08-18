@@ -9,7 +9,6 @@ const { WebSocketServer } = require('ws');
 const herdr = require('./lib/herdr-client');
 const { parseAnsiScreen } = require('./lib/ansi');
 const preview = require('./lib/preview');
-const cast = require('./lib/cast');
 const settings = require('./lib/settings');
 const dirs = require('./lib/dirs');
 const security = require('./lib/security');
@@ -290,33 +289,22 @@ app.post('/api/preview/enable', (req, res) => {
   res.json({ ok: true, port });
 });
 
-app.get('/api/cast/targets', async (_req, res) => {
-  try {
-    res.json({ targets: await cast.listTargets(), cdpPort: cast.CDP_PORT });
-  } catch (e) {
-    res.status(503).json({ error: e.message, cdpPort: cast.CDP_PORT });
-  }
-});
-
 // Proxy for enabled preview ports — must sit before the static handler so a
 // dev server's /index.html wins over ours when routed by Referer.
 app.use((req, res, next) => { if (!preview.handle(req, res)) next(); });
 
-// index.html must never be cached (PWA staleness trap — tmux-web lesson).
+// Never cache the application shell while this small UI is evolving.
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
-    if (filePath.endsWith('.html') || filePath.endsWith('sw.js') || filePath.endsWith('.webmanifest')) {
-      res.setHeader('Cache-Control', 'no-store');
-    }
+    if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-store');
   },
 }));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
-const castWss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
 
-// One upgrade handler for three consumers: the session WS, cast sessions, and
-// proxied dev-server sockets (Vite HMR et al).
+// One upgrade handler for the terminal session and proxied dev-server sockets
+// (Vite HMR et al).
 server.on('upgrade', (req, socket, head) => {
   const access = security.validateWebSocketRequest(req);
   if (!access.ok) {
@@ -328,19 +316,9 @@ server.on('upgrade', (req, socket, head) => {
   const path = (req.url || '').split('?')[0];
   if (path === '/ws') {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-  } else if (path === '/cast') {
-    castWss.handleUpgrade(req, socket, head, (ws) => castWss.emit('connection', ws, req));
   } else if (!preview.handleUpgrade(req, socket, head)) {
     socket.destroy();
   }
-});
-
-castWss.on('connection', (ws, req) => {
-  const targetId = new URL(req.url, 'http://x').searchParams.get('target');
-  cast.attach(ws, targetId).catch((e) => {
-    jlog('error', 'cast-attach-failed', { error: e.message });
-    try { ws.send(JSON.stringify({ type: 'error', error: e.message })); ws.close(); } catch { /* ignore */ }
-  });
 });
 
 wss.on('connection', (ws) => {
@@ -376,7 +354,7 @@ wss.on('connection', (ws) => {
         case 'submit': {
           // Prefer herdr's agent.prompt — it submits text+Enter while
           // honoring the pane's live bracketed-paste mode, which raw
-          // send_input does not (drafts got stuck in CC's input box).
+          // send_input does not (drafts can get stuck in an agent input box).
           // Falls back to one atomic pane.send_input for plain shell panes.
           if (msg.text) {
             try {

@@ -13,7 +13,6 @@ fs.mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({
   viewport: { width: 414, height: 896 },
-  serviceWorkers: 'block',
 });
 const page = await ctx.newPage();
 page.on('console', (m) => {
@@ -51,7 +50,7 @@ const report = await page.evaluate(() => {
     tabs, rows, pageScrollY: window.scrollY, vh,
     reach,
     termSample: termText.split('\n').slice(-6),
-    fontSize: document.getElementById('term').style.fontSize,
+    fontSize: getComputedStyle(term).fontSize,
     sharedRuntimeResize: term.classList.contains('shared-runtime-resize'),
     termClientWidth: term.clientWidth,
     maxRowScrollWidth: Math.max(0, ...rowEls.map((r) => r.scrollWidth)),
