@@ -57,6 +57,19 @@ Demos: [desktop, side by side](docs/demos/desktop-browser.md) ·
 
 ## Install
 
+### One-command RC setup
+
+With Herdr running and Tailscale installed and signed in, this installs the
+plugin, starts the bridge, configures a private Tailscale Serve route, and
+prints the phone URL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hope7Happiness/herdr-web/master/scripts/install-rc.sh | bash
+```
+
+The operation is idempotent: run it again to update or repair the setup. It
+refuses to replace an unrelated Tailscale Serve or Funnel listener.
+
 ### As a herdr plugin
 
 ```bash
@@ -64,7 +77,8 @@ herdr plugin install Hope7Happiness/herdr-web
 ```
 
 The plugin's startup hook launches the bridge on `http://127.0.0.1:7930`
-whenever herdr starts (and there are Start/Stop actions in herdr's UI).
+whenever herdr starts. From Herdr's plugin actions, choose **Set up phone RC
+with Tailscale** to perform the remaining setup with one click.
 
 ### Standalone
 

@@ -1,6 +1,6 @@
 id = "hope7happiness.herdr-web"
 name = "herdr-web"
-version = "0.4.0"
+version = "0.4.1"
 min_herdr_version = "0.7.0"
 description = "Mobile-first web UI: drive your agents from a phone browser"
 platforms = ["linux", "macos"]
@@ -27,7 +27,7 @@ command = ["bash", "scripts/plugin-stop.sh"]
 
 [[actions]]
 id = "tailscale-serve"
-title = "Expose herdr-web privately with Tailscale"
+title = "Set up phone RC with Tailscale"
 contexts = ["workspace"]
 command = ["bash", "scripts/tailscale.sh", "serve"]
 
