@@ -19,8 +19,7 @@ if [ ! -d "$ROOT/node_modules/express" ]; then
   (cd "$ROOT" && npm install --no-fund --no-audit)
 fi
 
-setsid nohup node "$ROOT/server.js" >> "$STATE_DIR/server.log" 2>&1 < /dev/null &
-echo $! > "$STATE_DIR/server.pid"
+node "$ROOT/scripts/daemon-start.js" "$STATE_DIR" > "$STATE_DIR/server.pid"
 
 for _ in $(seq 1 20); do
   sleep 0.5

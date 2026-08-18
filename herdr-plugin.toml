@@ -1,6 +1,6 @@
-id = "eyalev.herdr-web"
+id = "hope7happiness.herdr-web"
 name = "herdr-web"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.7.0"
 description = "Mobile-first web UI: drive your agents from a phone browser"
 platforms = ["linux", "macos"]
@@ -24,3 +24,21 @@ id = "stop"
 title = "Stop herdr-web server"
 contexts = ["workspace"]
 command = ["bash", "scripts/plugin-stop.sh"]
+
+[[actions]]
+id = "tailscale-serve"
+title = "Expose herdr-web privately with Tailscale"
+contexts = ["workspace"]
+command = ["bash", "scripts/tailscale.sh", "serve"]
+
+[[actions]]
+id = "tailscale-status"
+title = "Show herdr-web Tailscale status"
+contexts = ["workspace"]
+command = ["bash", "scripts/tailscale.sh", "status"]
+
+[[actions]]
+id = "tailscale-stop"
+title = "Stop herdr-web Tailscale listener"
+contexts = ["workspace"]
+command = ["bash", "scripts/tailscale.sh", "off"]

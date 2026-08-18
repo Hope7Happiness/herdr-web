@@ -13,6 +13,7 @@ const preview = require('./lib/preview');
 const cast = require('./lib/cast');
 const settings = require('./lib/settings');
 const dirs = require('./lib/dirs');
+const security = require('./lib/security');
 
 const sizeDriver = new SizeDriver();
 
@@ -201,6 +202,9 @@ function stopWatcher(paneId) {
 // ---------------------------------------------------------------------------
 
 const app = express();
+app.disable('x-powered-by');
+app.use(security.hostGuard);
+app.use(security.securityHeaders);
 app.use(express.json());
 
 app.get('/api/sessions', async (_req, res) => {
@@ -297,12 +301,19 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
-const castWss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
+const castWss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
 
 // One upgrade handler for three consumers: the session WS, cast sessions, and
 // proxied dev-server sockets (Vite HMR et al).
 server.on('upgrade', (req, socket, head) => {
+  const access = security.validateWebSocketRequest(req);
+  if (!access.ok) {
+    jlog('warn', 'ws-rejected', { reason: access.reason });
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
   const path = (req.url || '').split('?')[0];
   if (path === '/ws') {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
@@ -407,3 +418,17 @@ wss.on('connection', (ws) => {
   jlog('error', 'startup-failed', { error: e.message });
   process.exit(1);
 });
+
+function shutdown(signal) {
+  jlog('info', 'shutdown', { signal });
+  state.eventSub?.close();
+  if (state.refreshTimer) clearTimeout(state.refreshTimer);
+  for (const paneId of watchers.keys()) stopWatcher(paneId);
+  sizeDriver.stop();
+  for (const ws of state.webClients) ws.close(1001, 'server shutting down');
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 5000).unref();
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));

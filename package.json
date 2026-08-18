@@ -1,13 +1,19 @@
 {
   "name": "herdr-web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mobile-first web UI for the herdr agent multiplexer \u2014 drive your coding agents from a phone browser",
   "main": "index.js",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test",
+    "check": "bash scripts/_check-syntax.sh && bash scripts/_check-links.sh && node --test",
+    "tailscale:serve": "bash scripts/tailscale.sh serve",
+    "tailscale:status": "bash scripts/tailscale.sh status",
+    "tailscale:off": "bash scripts/tailscale.sh off",
+    "tailscale:doctor": "bash scripts/tailscale.sh doctor"
   },
   "keywords": [
     "herdr",
@@ -20,6 +26,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "express": "^5.2.1",
     "ws": "^8.21.1"
@@ -29,8 +38,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/eyalev/herdr-web.git"
+    "url": "https://github.com/Hope7Happiness/herdr-web.git"
   },
+  "bugs": {
+    "url": "https://github.com/Hope7Happiness/herdr-web/issues"
+  },
+  "homepage": "https://github.com/Hope7Happiness/herdr-web#readme",
   "optionalDependencies": {
     "node-pty": "^1.1.0"
   }

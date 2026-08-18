@@ -1421,7 +1421,13 @@ async function loadPorts() {
   for (const p of ports) {
     const c = document.createElement('div');
     c.className = 'chip' + (p.port === pvPort ? ' on' : '');
-    c.innerHTML = `${p.port}${p.process ? `<span class="sub">${p.process}</span>` : ''}`;
+    c.append(String(p.port));
+    if (p.process) {
+      const processName = document.createElement('span');
+      processName.className = 'sub';
+      processName.textContent = p.process;
+      c.appendChild(processName);
+    }
     c.addEventListener('click', () => selectPort(p.port));
     bar.appendChild(c);
   }

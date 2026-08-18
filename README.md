@@ -1,5 +1,11 @@
 # herdr-web
 
+> This is the `Hope7Happiness/herdr-web` fork of
+> [`eyalev/herdr-web`](https://github.com/eyalev/herdr-web). It keeps the
+> upstream mobile UI and adds first-class Tailscale lifecycle commands,
+> cross-origin WebSocket protection, security headers, tests, and macOS-safe
+> plugin startup.
+
 Mobile-first web UI for the [herdr](https://herdr.dev) agent multiplexer —
 view and drive your coding agents (Claude Code first) from a phone browser,
 backed by herdr's persistent PTY sessions and its semantic agent states
@@ -78,7 +84,7 @@ Demos: [desktop, side by side](docs/demos/desktop-browser.md) ·
 ### As a herdr plugin
 
 ```bash
-herdr plugin install eyalev/herdr-web
+herdr plugin install Hope7Happiness/herdr-web
 ```
 
 The plugin's startup hook launches the bridge on `http://127.0.0.1:7930`
@@ -87,7 +93,7 @@ whenever herdr starts (and there are Start/Stop actions in herdr's UI).
 ### Standalone
 
 ```bash
-git clone https://github.com/eyalev/herdr-web
+git clone https://github.com/Hope7Happiness/herdr-web
 cd herdr-web && npm install
 node server.js        # http://127.0.0.1:7930
 ```
@@ -102,11 +108,64 @@ The server deliberately binds `127.0.0.1` only — **it grants full terminal
 control of every pane with no auth**. Expose it through something that
 handles transport security for you:
 
-- **Tailscale** (recommended): `tailscale serve --bg --https=17930 http://127.0.0.1:7930`
-  then open `https://<machine>.<tailnet>.ts.net:17930` on your phone.
-  HTTPS also unlocks notifications and PWA install.
+- **Tailscale** (recommended): use the lifecycle commands below. HTTPS also
+  unlocks notifications and PWA install.
 - Any authenticated reverse proxy works the same way.
 - `HERDR_WEB_BIND=0.0.0.0` exists if you really know what you're doing.
+
+### Tailscale quick start
+
+Install Tailscale on both the Herdr computer and phone, and sign both into the
+same tailnet. Then, from this repository:
+
+```bash
+npm run tailscale:serve
+```
+
+This command starts herdr-web if needed, creates a **private, tailnet-only**
+HTTPS listener on port `17930`, and prints the phone URL:
+
+```text
+https://<machine>.<tailnet>.ts.net:17930
+```
+
+The helper supports Linux and both macOS CLI locations. It never enables
+Tailscale Funnel and never resets unrelated Serve routes.
+
+```bash
+npm run tailscale:status  # Tailscale, Serve, bridge, and phone URL
+npm run tailscale:doctor  # versions and connectivity diagnostics
+npm run tailscale:off     # remove only the :17930 HTTPS listener
+```
+
+As a Herdr plugin, the same operations appear as `Tailscale Serve`,
+`Tailscale status`, and `Tailscale stop` actions.
+
+To choose another private HTTPS port:
+
+```bash
+HERDR_WEB_TAILSCALE_HTTPS_PORT=443 npm run tailscale:serve
+```
+
+Tailscale Serve access is governed by your tailnet ACLs. Restrict this device
+and port to the people/devices that should have full shell control. Do not use
+Funnel for herdr-web.
+
+### Reverse proxies and allowed hosts
+
+Loopback hosts and `*.ts.net` hosts work without configuration. A custom
+authenticated reverse proxy must preserve its original `Host` header, or be
+listed explicitly:
+
+```bash
+HERDR_WEB_ALLOWED_HOSTS=herdr.example.com \
+HERDR_WEB_ALLOWED_ORIGINS=https://herdr.example.com \
+node server.js
+```
+
+WebSocket connections require a same-origin browser request. This prevents an
+untrusted website open in your browser from silently controlling Herdr through
+the local bridge.
 
 ## How it works
 
@@ -146,6 +205,9 @@ The full empirical API recon that shaped this design:
 | `HERDR_SOCKET_PATH` | `~/.config/herdr/herdr.sock` | herdr API socket |
 | `HERDR_WEB_CDP_PORT` | `9222` | Chrome DevTools endpoint used by Cast |
 | `HERDR_WEB_CONFIG_DIR` | `~/.config/herdr-web` | Where `settings.json` lives |
+| `HERDR_WEB_TAILSCALE_HTTPS_PORT` | `17930` | Private Tailscale Serve HTTPS port |
+| `HERDR_WEB_ALLOWED_HOSTS` | empty | Extra comma-separated reverse-proxy hostnames |
+| `HERDR_WEB_ALLOWED_ORIGINS` | empty | Extra comma-separated trusted browser origins |
 
 Settings (the ⚙ button) are stored server-side in `settings.json`, so your
 phone and your laptop agree. The one that matters most is **agent command**:
@@ -164,9 +226,11 @@ sidebar_collapsed_mode = "hidden"
 
 ## Status
 
-Early but real — built and verified against herdr 0.7.5 (protocol 17) with
-emulator-tested UX (see [docs/demos.md](docs/demos.md) for the evidence).
-Expect herdr's pre-1.0 API to move. Issues and PRs welcome.
+Beta-quality, not yet a security boundary or a full desktop replacement. This
+fork is verified against herdr 0.8.0 (protocol 19) and Tailscale 1.98.5 on
+macOS, including real HTTPS/WSS access through Tailscale Serve and a 414×896
+mobile smoke test. Expect herdr's pre-1.0 API to move. See the
+[maintenance audit](docs/maintenance-audit.md) for known gaps and evidence.
 
 ## License
 
