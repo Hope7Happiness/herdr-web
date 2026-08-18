@@ -82,13 +82,21 @@
   /* ---- terminal ---- */
   #termwrap { flex: 1; min-height: 0; position: relative; background: var(--bg); }
   #term {
-    height: 100%; overflow-y: auto; overflow-x: auto;
+    height: 100%; overflow-y: auto; overflow-x: hidden;
     font-family: 'Cascadia Mono', 'Roboto Mono', ui-monospace, monospace;
+    font-variant-ligatures: none; letter-spacing: 0; tab-size: 8;
     padding: 6px 4px; overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
     overflow-anchor: none; /* we manage scroll position explicitly */
   }
-  #term .row { white-space: pre; line-height: 1.25; min-height: 1.25em; }
+  /* Independent mode is the default: wrap the already-rendered terminal rows
+     inside this browser without changing the shared PTY's real dimensions. */
+  #term .row {
+    white-space: break-spaces; overflow-wrap: anywhere;
+    line-height: 1.25; min-height: 1.25em;
+  }
+  #term.shared-runtime-resize { overflow-x: auto; }
+  #term.shared-runtime-resize .row { white-space: pre; overflow-wrap: normal; }
   /* Box drawing falls back to a font whose glyphs are wider than the
      monospace cell on Android. Squeeze a run of them back into exactly N
      cells so every row has the same advance as ASCII — otherwise separator
@@ -97,7 +105,7 @@
     display: inline-block; white-space: pre; overflow: hidden;
     transform-origin: left center; transform: scaleX(var(--boxscale, 0.72));
   }
-  #term .row span { white-space: pre; }
+  #term .row span { white-space: inherit; }
   .b { font-weight: 700; } .dim2 { opacity: 0.6; } .i { font-style: italic; }
   .u { text-decoration: underline; } .st { text-decoration: line-through; }
   /* Fixed-width cells for glyphs with font-dependent advance (spinner
@@ -334,7 +342,7 @@
           <button id="set-font-auto" type="button">Auto</button>
         </div>
       </div>
-      <p class="hint">Per device, so your phone and your laptop keep their own. The pane's column count follows the size — the terminal always fills the width.</p>
+      <p class="hint">Per device. By default the browser wraps rows locally, so changing phone size never resizes the desktop terminal.</p>
       <label class="fld">Default working directory
         <input id="set-cwd" placeholder="(none)" autocomplete="off" autocapitalize="off" spellcheck="false">
       </label>
@@ -400,6 +408,7 @@ let liveRows = [];          // last live screen rows
 let lastRecent = null;      // last scrollback fetch — rendered ABOVE the live block
 let atBottom = true;        // view pinned to the live tail
 let fontSize = +(localStorage.getItem('herdr-web-font') || 0); // 0 = auto
+let sharedRuntimeResize = false;
 
 // One scroll container, two blocks: prefetched history above, live screen
 // below. Scrolling into history is plain native scrolling — zero fetches on
@@ -456,11 +465,14 @@ function appendGlyphAware(el, text) {
   let run = '', box = '';
   const flushBox = () => {
     if (!box) return;
-    const sp = document.createElement('span');
-    sp.className = 'gbox';
-    sp.style.width = `calc(var(--cellw, 1ch) * ${box.length})`;
-    sp.textContent = box;
-    el.appendChild(sp);
+    const runs = sharedRuntimeResize ? [box] : [...box];
+    for (const chars of runs) {
+      const sp = document.createElement('span');
+      sp.className = 'gbox';
+      sp.style.width = `calc(var(--cellw, 1ch) * ${chars.length})`;
+      sp.textContent = chars;
+      el.appendChild(sp);
+    }
     box = '';
   };
   for (const ch of text) {
@@ -496,14 +508,26 @@ function calibrateBoxScale() {
   probe.remove();
   if (ascii > 0 && boxw > 0) {
     // Every cell — plain text, pinned glyphs, squeezed box runs — is exactly
-    // one ASCII advance wide, so a row of N characters is always N cells and
-    // the negotiated column count fills the screen for text as well as art.
+    // one ASCII advance wide, so local wrapping lands on a stable cell edge.
     document.documentElement.style.setProperty('--cellw', ascii.toFixed(3) + 'px');
     document.documentElement.style.setProperty('--boxscale', String(Math.min(1, ascii / boxw)));
   }
 }
 
-function renderRow(spans) {
+function trimTrailingCells(spans) {
+  if (sharedRuntimeResize) return spans;
+  const out = spans.map((span) => ({ ...span }));
+  while (out.length) {
+    const last = out[out.length - 1];
+    last.t = last.t.replace(/[ \t]+$/, '');
+    if (last.t) break;
+    out.pop();
+  }
+  return out;
+}
+
+function renderRow(sourceSpans) {
+  const spans = trimTrailingCells(sourceSpans);
   const div = document.createElement('div');
   div.className = 'row';
   for (const s of spans) {
@@ -532,35 +556,23 @@ function renderInto(el, rows) {
   el.replaceChildren(frag);
 }
 
-// Widest line ever seen for this pane. Sizing to the CURRENT screen is wrong:
-// a screen that happens to hold short lines picks a big font, and the next
-// full-width frame then overflows and the view scrolls sideways.
-// Sizing is ONE-DIRECTIONAL: the font is a preference, and the backend's
-// column count is derived from it. Deriving the font from content made a short
-// screen pick a huge font; deriving columns from a font we then changed made
-// the two chase each other until they hit the floor. Pick the font, measure
-// what a character really costs, ask for that many columns — the pane then
-// fills the width exactly, with no gutter and nothing to scroll sideways.
+// Font size is a local preference. Independent mode lets CSS wrap the source
+// grid at that size; shared resize mode derives one PTY column count from it.
 function applyFont() {
   const px = (fontSize || TARGET_FONT) + 'px';
   if (term.style.fontSize !== px) { term.style.fontSize = px; calibrateBoxScale(); }
 }
 function fitFont() {
   applyFont();
-  shrinkToFit();
-  negotiateCols();
 }
 
 // Text size is a per-device preference — the phone and the laptop want
-// different answers — so it stays in localStorage rather than the
-// server-synced settings. Changing it re-derives the column count, so the pane
-// keeps filling the width exactly instead of leaving a gutter.
+// different answers — so it stays in localStorage rather than server settings.
 function setFont(px) {
   fontSize = Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(px)));
   localStorage.setItem('herdr-web-font', String(fontSize));
   applyFont();
   if (atBottom) pinBottom();
-  negotiateCols();
   syncFontUi();
 }
 function bumpFont(delta) { setFont((fontSize || TARGET_FONT) + delta); }
@@ -569,7 +581,6 @@ function autoFont() {
   localStorage.removeItem('herdr-web-font');
   applyFont();
   if (atBottom) pinBottom();
-  negotiateCols();
   syncFontUi();
 }
 function syncFontUi() {
@@ -578,61 +589,6 @@ function syncFontUi() {
   fontUp.style.opacity = px >= FONT_MAX ? '.4' : '';
   const lbl = document.getElementById('set-font-val');
   if (lbl) lbl.textContent = fontSize ? `${fontSize}px` : `${TARGET_FONT}px · auto`;
-}
-
-// How wide is a character REALLY, in the rows we are actually drawing? Box
-// drawing (─│└┘) falls back to a font whose glyphs are ~40% wider than ASCII
-// on Android, so a screen sized by ASCII either overflows on separator lines
-// or, once the font shrinks to fit them, leaves text under-filling the width.
-// Measure the worst case and let the backend give us that many columns; the
-// font stays put, so this converges instead of chasing itself.
-function measuredAdvance() {
-  let worst = 0;
-  for (const r of liveEl.children) {
-    const len = r.textContent.replace(/\s+$/, '').length;
-    if (len < 8) continue;
-    let w = 0;
-    for (const sp of r.children) w += sp.getBoundingClientRect().width;
-    if (!w) continue;
-    worst = Math.max(worst, w / len);
-  }
-  return worst;
-}
-
-let colsTimer = null;
-function negotiateCols() {
-  // Runs for a hand-picked font too: the size is the preference, the column
-  // count follows it, so the pane still fills the width exactly at any size.
-  if (!wsOk) return;
-  const adv = measuredAdvance();
-  if (!adv) return;
-  const want = Math.floor((term.clientWidth - 8) / adv);
-  if (want < 20 || Math.abs(want - (fitCols || 0)) < 2) return;
-  clearTimeout(colsTimer);
-  colsTimer = setTimeout(() => {
-    const px = parseFloat(term.style.fontSize) || TARGET_FONT;
-    const rows = Math.floor((term.clientHeight - 12) / (px * LINE_H));
-    if (rows < 10) return;
-    fitCols = want;
-    awaitingRewrap = true; // the next screen arrives re-wrapped; history must follow
-    send({ type: 'resize', cols: want, rows });
-  }, 500);
-}
-
-
-// Belt and braces: whatever the arithmetic says, if the rendered rows are
-// wider than the box, step the font down until they are not. Fonts round,
-// glyph advances vary — measurement is the only thing that cannot be wrong.
-// Safety net only: if the runtime is wider than we asked (no node-pty, so it
-// stays at herdr's 80-column default), shrink so nothing scrolls sideways.
-function shrinkToFit() {
-  if (fontSize) return;
-  const widest = () => Math.max(0, ...[...liveEl.children].map((r) => r.scrollWidth));
-  for (let i = 0; i < 8; i++) {
-    const px = parseFloat(term.style.fontSize) || TARGET_FONT;
-    if (widest() <= term.clientWidth - 6 || px <= 7) break;
-    term.style.fontSize = (px - 1) + 'px';
-  }
 }
 
 function scrollToLive() {
@@ -757,11 +713,10 @@ histBadge.addEventListener('mousedown', (e) => e.preventDefault());
 histBadge.addEventListener('click', scrollToLive);
 
 // ---------------------------------------------------------------------------
-// Viewport fit -> drive the herdr runtime size (tmux-web-style readable width)
+// Optional legacy mode: drive the shared Herdr runtime size.
 // ---------------------------------------------------------------------------
-// 11px puts a character at ~6.8 CSS px, the same text density tmux-web reads at
-// on the same phone (its 12px xterm advance, measured side by side). The server
-// resizes herdr to whatever column count that works out to.
+// 11px puts a character at ~6.8 CSS px. Independent mode wraps locally at this
+// density; the server is contacted only when shared runtime resize is enabled.
 const TARGET_FONT = 11;
 const FONT_MIN = 8, FONT_MAX = 22;
 const LINE_H = 1.25;
@@ -784,13 +739,17 @@ function measureCharW(px) {
 let maxInnerH = window.innerHeight;
 let fitCols = 0;
 function sendFit() {
-  if (!wsOk) return;
+  if (!wsOk || !sharedRuntimeResize) return;
   const px = fontSize || TARGET_FONT;
   applyFont();
   const charW = measureCharW(px);
   const cols = Math.floor((term.clientWidth - 8) / charW);
   const rows = Math.floor((term.clientHeight - 12) / (px * LINE_H));
-  if (cols >= 20 && rows >= 10) { fitCols = cols; send({ type: 'resize', cols, rows }); }
+  if (cols >= 20 && rows >= 10 && Math.abs(cols - fitCols) >= 2) {
+    fitCols = cols;
+    awaitingRewrap = true;
+    send({ type: 'resize', cols, rows });
+  }
 }
 
 // Keyboard open/close resizes the layout — keep the live tail in view.
@@ -980,6 +939,14 @@ function connect() {
     const m = JSON.parse(ev.data);
     switch (m.type) {
       case 'sessions': {
+        const nextSharedResize = Boolean(m.capabilities?.sharedRuntimeResize);
+        if (nextSharedResize !== sharedRuntimeResize) {
+          sharedRuntimeResize = nextSharedResize;
+          term.classList.toggle('shared-runtime-resize', sharedRuntimeResize);
+          renderInto(histEl, lastRecent ? cutOverlap(lastRecent, liveRows) : []);
+          renderInto(liveEl, liveRows);
+          if (sharedRuntimeResize) setTimeout(sendFit, 0);
+        }
         sessions = m.sessions;
         const known = paneEntries().map((e) => e.p.pane_id);
         if (activePane && !known.includes(activePane)) activePane = null;

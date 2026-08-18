@@ -22,8 +22,8 @@ Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordinatio
 ## What you get
 
 - **Live terminal view** of any herdr pane, rendered as native DOM rows at a
-  phone-readable width — herdr's runtime is resized to fit your screen, so
-  Claude Code *reflows* to ~50 columns instead of squinting at 80.
+  phone-readable size. Rows wrap locally in the browser, so opening the phone
+  no longer changes the desktop terminal's PTY width.
 - **Agent-status tabs** — herdr's killer feature, front and center: one tab
   per pane with a colored state dot (working / blocked / done / idle),
   sorted by attention.
@@ -40,8 +40,8 @@ Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordinatio
   a running agent with `/model`, `/compact`, `/clear`, mode cycling and rewind.
 - **Directory picker** — `📁 cd` finds projects by zoxide frecency, git repos
   and open panes, so you never type a path on a phone.
-- **Text size you control** — `A−`/`A+` in the keys row; the pane's column
-  count follows the size, so the terminal fills the width at any of them.
+- **Text size you control** — `A−`/`A+` in the keys row changes only that
+  browser; terminal rows keep filling the available width.
 - **An integrated browser that isn't a pixel stream** — see below.
 - **PWA** — installable, no build step, three runtime dependencies.
 
@@ -98,9 +98,9 @@ cd herdr-web && npm install
 node server.js        # http://127.0.0.1:7930
 ```
 
-Requires Node 18+, a running (or startable) herdr ≥ 0.7. `node-pty` is an
-optional dependency — without it everything works, but the terminal stays at
-herdr's 80×24 headless default instead of fitting your phone.
+Requires Node 18+ and a running (or startable) herdr ≥ 0.7. `node-pty` is only
+used by the optional legacy shared-resize mode; independent mode does not need
+it.
 
 ## Reaching it from your phone
 
@@ -174,8 +174,8 @@ the local bridge.
    │ ▲ screens/agent-states (WebSocket) · keys, prompts (WS/HTTP)
    ▼ │
  herdr-web bridge :7930
-   server.js ── lib/ansi.js (ANSI → grid)
-   │            lib/size-driver.js (fit-to-phone resize)
+   server.js ── lib/ansi.js (ANSI → locally wrapped DOM rows)
+   │            lib/size-driver.js (optional shared PTY resize)
    ▼  JSON socket (session.snapshot, events, agent.prompt, keys)
  herdr daemon ──▶ PTY panes (Claude Code agents, …)
 ```
@@ -188,10 +188,23 @@ parses the SGR-only styled lines into spans (~100 lines of code), and ships
 them over a WebSocket. Background panes cost nothing — their status dots
 come from pushed `pane.agent_status_changed` events.
 
-The one clever bit: the JSON API can't resize the headless runtime, but the
-runtime follows the foreground *client's* terminal size — so the bridge
-keeps a real `herdr` TUI client in a hidden pty and resizes it to whatever
-your browser reports. That's what makes agents reflow to phone width.
+### Independent sizing
+
+A terminal process has one real PTY geometry, so two clients cannot get native
+TUI reflow at different widths from the same process. By default, herdr-web
+leaves that geometry entirely under the desktop Herdr client and wraps the
+rendered rows locally in each browser. Phone rotation and font controls
+therefore never resize the computer terminal.
+
+The old native-reflow approach remains available as an explicit compatibility
+mode:
+
+```bash
+HERDR_WEB_SHARED_RUNTIME_RESIZE=true node server.js
+```
+
+It makes the shared PTY follow the browser and will consequently affect an
+attached desktop client, so it should not normally be enabled.
 
 The full empirical API recon that shaped this design:
 [docs/socket-api-notes.md](docs/socket-api-notes.md).
@@ -208,6 +221,7 @@ The full empirical API recon that shaped this design:
 | `HERDR_WEB_TAILSCALE_HTTPS_PORT` | `17930` | Private Tailscale Serve HTTPS port |
 | `HERDR_WEB_ALLOWED_HOSTS` | empty | Extra comma-separated reverse-proxy hostnames |
 | `HERDR_WEB_ALLOWED_ORIGINS` | empty | Extra comma-separated trusted browser origins |
+| `HERDR_WEB_SHARED_RUNTIME_RESIZE` | `false` | Opt into shared PTY resizing; also affects desktop clients |
 
 Settings (the ⚙ button) are stored server-side in `settings.json`, so your
 phone and your laptop agree. The one that matters most is **agent command**:
@@ -229,7 +243,7 @@ sidebar_collapsed_mode = "hidden"
 Beta-quality, not yet a security boundary or a full desktop replacement. This
 fork is verified against herdr 0.8.0 (protocol 19) and Tailscale 1.98.5 on
 macOS, including real HTTPS/WSS access through Tailscale Serve and a 414×896
-mobile smoke test. Expect herdr's pre-1.0 API to move. See the
+independent-width mobile smoke test. Expect herdr's pre-1.0 API to move. See the
 [maintenance audit](docs/maintenance-audit.md) for known gaps and evidence.
 
 ## License

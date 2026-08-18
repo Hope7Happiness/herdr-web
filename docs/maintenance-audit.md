@@ -19,8 +19,11 @@ multi-user service.
 - Herdr 0.8.0, protocol 19: snapshot, events, pane reads, and WebSocket fanout.
 - Node 26.7.0 on macOS arm64; production dependency audit reports no known
   vulnerabilities at the audit date.
-- 414×896 Playwright smoke test: session tabs, live terminal, 154 rendered
-  rows, controls reachable without page scrolling, and 11px phone text.
+- 414×896 Playwright smoke test: session tabs, live terminal, controls
+  reachable without page scrolling, 11px phone text, and rendered rows filling
+  406px of the 414px viewport after padding.
+- Independent sizing test: opening the mobile view leaves five live pane grids
+  unchanged at 170–172 source columns while the browser wraps locally.
 - Tailscale 1.98.5: private HTTPS Serve on `:17930`, HTTPS 200, WSS session
   connection, status/doctor/off/restart lifecycle, and preservation of an
   unrelated Funnel route on `:443`.
@@ -52,9 +55,9 @@ multi-user service.
   desktop-parity controls are added.
 - Terminal updates poll the visible pane every 300 ms instead of consuming a
   native screen-diff stream.
-- The hidden client controls global runtime dimensions. Multiple simultaneous
-  browser sizes and an attached desktop client need an explicit arbitration
-  policy.
+- Native TUI reflow still requires shared PTY resizing and therefore cannot be
+  independent across clients. Default local wrapping avoids that tradeoff;
+  legacy shared resizing remains opt-in.
 - Herdr's protocol is pre-1.0. Compatibility tests should cover every supported
   Herdr release before upgrading the minimum version.
 - Preview and Chrome Cast intentionally grant broad control over trusted local
@@ -71,5 +74,5 @@ multi-user service.
    identity, and reconnect state.
 3. Add workspace, tab, pane layout, and lifecycle controls through the public
    Herdr API.
-4. Define size ownership for simultaneous phone and desktop clients.
+4. Improve local wrapping for complex full-screen TUI chrome and tables.
 5. Add optional application authentication for non-Tailscale deployments.

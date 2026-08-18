@@ -8,14 +8,17 @@ const express = require('express');
 const { WebSocketServer } = require('ws');
 const herdr = require('./lib/herdr-client');
 const { parseAnsiScreen } = require('./lib/ansi');
-const { SizeDriver } = require('./lib/size-driver');
 const preview = require('./lib/preview');
 const cast = require('./lib/cast');
 const settings = require('./lib/settings');
 const dirs = require('./lib/dirs');
 const security = require('./lib/security');
 
-const sizeDriver = new SizeDriver();
+// A PTY has one real row/column size. Resizing it for a phone necessarily
+// changes every attached desktop client too, so keep that legacy behaviour
+// opt-in. The default browser view wraps the rendered grid locally instead.
+const SHARED_RUNTIME_RESIZE = /^(1|true|yes)$/i.test(process.env.HERDR_WEB_SHARED_RUNTIME_RESIZE || '');
+const sizeDriver = SHARED_RUNTIME_RESIZE ? new (require('./lib/size-driver').SizeDriver)() : null;
 
 // Deliberately NOT process.env.PORT — that leaks from parent shells (bit us:
 // inherited PORT=7681 = tmux-web's port).
@@ -49,11 +52,19 @@ function broadcast(msg) {
   }
 }
 
+function sessionsMessage() {
+  return {
+    type: 'sessions',
+    sessions: sessionList(),
+    capabilities: { sharedRuntimeResize: SHARED_RUNTIME_RESIZE },
+  };
+}
+
 async function refreshSnapshot(reason) {
   try {
     const res = await herdr.request('session.snapshot');
     state.snapshot = res.snapshot;
-    broadcast({ type: 'sessions', sessions: sessionList() });
+    broadcast(sessionsMessage());
     const ids = (state.snapshot.panes || []).map((p) => p.pane_id).sort();
     if (ids.join(',') !== state.paneIds.join(',')) resubscribe(ids);
   } catch (e) {
@@ -209,7 +220,7 @@ app.use(express.json());
 
 app.get('/api/sessions', async (_req, res) => {
   await refreshSnapshot('api-sessions');
-  res.json({ sessions: sessionList() });
+  res.json({ sessions: sessionList(), capabilities: { sharedRuntimeResize: SHARED_RUNTIME_RESIZE } });
 });
 
 app.post('/api/workspaces', async (req, res) => {
@@ -336,7 +347,7 @@ wss.on('connection', (ws) => {
   state.webClients.add(ws);
   let watched = null;
   jlog('info', 'ws-open', { clients: state.webClients.size });
-  ws.send(JSON.stringify({ type: 'sessions', sessions: sessionList() }));
+  ws.send(JSON.stringify(sessionsMessage()));
 
   ws.on('message', async (raw) => {
     let msg;
@@ -379,7 +390,7 @@ wss.on('connection', (ws) => {
           break;
         }
         case 'resize': { // desired pane size from the client's viewport fit
-          if (Number.isFinite(msg.cols) && Number.isFinite(msg.rows)) {
+          if (sizeDriver && Number.isFinite(msg.cols) && Number.isFinite(msg.rows)) {
             sizeDriver.setPaneSize(Math.round(msg.cols), Math.round(msg.rows));
           }
           break;
@@ -413,7 +424,9 @@ wss.on('connection', (ws) => {
   const pong = await herdr.ensureServer();
   jlog('info', 'herdr-ready', { version: pong.version, protocol: pong.protocol });
   await refreshSnapshot('startup');
-  server.listen(PORT, BIND, () => jlog('info', 'listening', { port: PORT, bind: BIND }));
+  server.listen(PORT, BIND, () => jlog('info', 'listening', {
+    port: PORT, bind: BIND, sharedRuntimeResize: SHARED_RUNTIME_RESIZE,
+  }));
 })().catch((e) => {
   jlog('error', 'startup-failed', { error: e.message });
   process.exit(1);
@@ -424,7 +437,7 @@ function shutdown(signal) {
   state.eventSub?.close();
   if (state.refreshTimer) clearTimeout(state.refreshTimer);
   for (const paneId of watchers.keys()) stopWatcher(paneId);
-  sizeDriver.stop();
+  sizeDriver?.stop();
   for (const ws of state.webClients) ws.close(1001, 'server shutting down');
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000).unref();

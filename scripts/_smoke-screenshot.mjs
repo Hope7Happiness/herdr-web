@@ -32,7 +32,9 @@ const report = await page.evaluate(() => {
     active: t.classList.contains('active'),
   }));
   const rows = document.querySelectorAll('#term .row').length;
+  const rowEls = [...document.querySelectorAll('#term .row')];
   const termText = [...document.querySelectorAll('#term .row')].map((r) => r.textContent).join('\n');
+  const term = document.getElementById('term');
   // Reachability: every quick key + input + send must be inside the viewport.
   const vh = window.innerHeight;
   const reach = {};
@@ -50,6 +52,10 @@ const report = await page.evaluate(() => {
     reach,
     termSample: termText.split('\n').slice(-6),
     fontSize: document.getElementById('term').style.fontSize,
+    sharedRuntimeResize: term.classList.contains('shared-runtime-resize'),
+    termClientWidth: term.clientWidth,
+    maxRowScrollWidth: Math.max(0, ...rowEls.map((r) => r.scrollWidth)),
+    sourceMaxCells: Math.max(0, ...rowEls.map((r) => r.textContent.length)),
   };
 });
 console.log(JSON.stringify(report, null, 2));
@@ -62,6 +68,7 @@ console.log('screenshots in', OUT);
 await browser.close();
 
 const ok = report.tabs.length > 0 && report.rows > 5 &&
-  Object.values(report.reach).every((r) => r.inViewport) && report.pageScrollY === 0;
+  Object.values(report.reach).every((r) => r.inViewport) && report.pageScrollY === 0 &&
+  (report.sharedRuntimeResize || report.maxRowScrollWidth <= report.termClientWidth + 1);
 console.log(ok ? 'SMOKE PASS' : 'SMOKE FAIL');
 process.exit(ok ? 0 : 1);

@@ -11,9 +11,9 @@ Submitting is one atomic `agent.prompt` call, which honours the pane's live
 bracketed-paste mode — the reason prompts never arrive half-pasted here. The
 keyboard drops on send so the full terminal is visible while the agent thinks.
 
-The terminal itself is native DOM rows built from herdr's own screen reads, and
-the runtime is resized to your phone's width, so Claude Code *reflows* to about
-50 columns instead of being clipped at 80.
+The terminal itself is native DOM rows built from herdr's own screen reads.
+Rows wrap locally at a phone-readable size without resizing the shared Herdr
+PTY or the desktop client.
 
 ---
 
