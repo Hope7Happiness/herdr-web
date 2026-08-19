@@ -1,12 +1,15 @@
 id = "hope7happiness.herdr-web"
 name = "herdr-web"
-version = "0.6.3"
+version = "0.7.0"
 min_herdr_version = "0.7.0"
 description = "Mobile-first web UI: drive your agents from a phone browser"
 platforms = ["linux", "macos"]
 
 [[build]]
 command = ["npm", "install", "--no-fund", "--no-audit"]
+
+[[build]]
+command = ["bash", "scripts/install-agent-skill.sh"]
 
 [[build]]
 command = ["bash", "scripts/install-vendored-mirror.sh"]

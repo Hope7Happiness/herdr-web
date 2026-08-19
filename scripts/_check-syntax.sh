@@ -11,7 +11,7 @@ print("'use strict';" + m.group(1))
 PY
 node --check /tmp/.herdr-web-page.js && echo "page script OK"
 
-for file in server.js lib/*.js scripts/*.js scripts/*.mjs test/*.js; do
+for file in server.js lib/*.js scripts/*.js scripts/*.mjs skills/*/scripts/*.mjs test/*.js; do
   node --check "$file"
 done
 bash -n scripts/*.sh

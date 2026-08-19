@@ -1,0 +1,4 @@
+interface:
+  display_name: "Herdr RC & Remote"
+  short_description: "Enable phone RC and connect remote Herdr hosts"
+  default_prompt: "Use $herdr-rc-remote to enable phone remote control or connect a remote Herdr host."

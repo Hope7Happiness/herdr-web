@@ -64,8 +64,9 @@ Demos: [desktop, side by side](docs/demos/desktop-browser.md) ·
 ### One-command RC setup
 
 With Herdr running and Tailscale installed and signed in, this installs the RC
-plugin (including its vendored herdr-mirror source), starts the bridge,
-configures a private Tailscale Serve route, and prints the phone URL:
+plugin (including its vendored herdr-mirror source and Codex agent skill),
+starts the bridge, configures a private Tailscale Serve route, and prints the
+phone URL:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Hope7Happiness/herdr-web/master/scripts/install-rc.sh | bash
@@ -82,7 +83,10 @@ herdr plugin install Hope7Happiness/herdr-web
 
 The plugin's startup hook launches the bridge on `http://127.0.0.1:7930`
 whenever herdr starts. From Herdr's plugin actions, choose **Set up phone RC
-with Tailscale** to perform the remaining setup with one click.
+with Tailscale** to perform the remaining setup with one click. Installation
+also places the `herdr-rc-remote` skill in Codex's skill directory, so new
+Codex sessions understand requests such as “enable Herdr remote control” and
+“connect the Herdr panel on SSH host `rtx5090`”.
 
 ### Standalone
 
@@ -158,6 +162,11 @@ targets) under **Remote Herdr hosts**. Saving prepares the vendored mirror,
 writes its host configuration, and starts it. Remote workspaces and agents then
 appear in RC's existing session list; input uses mirror's normal writable
 session stream.
+
+An agent with the installed `herdr-rc-remote` skill can perform the same setup
+from a natural-language request. It verifies non-interactive SSH and the remote
+Herdr server before adding the named target; it never scans the tailnet or
+changes SSH authentication automatically.
 
 RC deliberately does not scan the tailnet. It only connects to hosts you name.
 Its generated mirror config uses `always_control = false`, so merely opening a

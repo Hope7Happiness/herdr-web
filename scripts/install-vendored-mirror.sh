@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MANIFEST="$ROOT/vendor/herdr-mirror/Cargo.toml"
 DEST="$ROOT/vendor/herdr-mirror/target/release/herdr-mirror"
-RELEASE="${HERDR_RC_MIRROR_RELEASE:-v0.6.3}"
+RELEASE="${HERDR_RC_MIRROR_RELEASE:-v0.7.0}"
 BASE="${HERDR_RC_MIRROR_ASSET_BASE:-https://github.com/Hope7Happiness/herdr-web/releases/download/${RELEASE}}"
 
 if command -v cargo >/dev/null 2>&1; then
