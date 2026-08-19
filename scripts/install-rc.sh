@@ -29,6 +29,9 @@ fi
 echo "Installing phone RC plugin from ${PLUGIN_REPO}@${PLUGIN_REF}..."
 "$HERDR_CMD" plugin install "$PLUGIN_REPO" --ref "$PLUGIN_REF" --yes
 
+echo "Installing cross-machine workspace support..."
+"$HERDR_CMD" plugin install nikok6/herdr-mirror --yes
+
 echo "Starting RC and configuring private Tailscale access..."
 invoke_json="$("$HERDR_CMD" plugin action invoke "$ACTION_ID")"
 log_id="$(printf '%s' "$invoke_json" | node -e '

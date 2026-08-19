@@ -38,6 +38,9 @@ Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordinatio
   and open panes, so you never type a path on a phone.
 - **New Codex sessions** — create a pane in a selected project with `codex` as
   the default command; the command remains configurable for aliases and flags.
+- **Cross-machine workspaces** — add explicit Tailscale/SSH hosts in Settings;
+  [`herdr-mirror`](https://github.com/nikok6/herdr-mirror) brings their live
+  Herdr workspaces into the same session list.
 - **Local web preview** — open a discovered dev-server port or tap a localhost
   URL in agent output.
 
@@ -59,9 +62,9 @@ Demos: [desktop, side by side](docs/demos/desktop-browser.md) ·
 
 ### One-command RC setup
 
-With Herdr running and Tailscale installed and signed in, this installs the
-plugin, starts the bridge, configures a private Tailscale Serve route, and
-prints the phone URL:
+With Herdr running and Tailscale installed and signed in, this installs the RC
+and herdr-mirror plugins, starts the bridge, configures a private Tailscale
+Serve route, and prints the phone URL:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Hope7Happiness/herdr-web/master/scripts/install-rc.sh | bash
@@ -139,6 +142,33 @@ HERDR_WEB_TAILSCALE_HTTPS_PORT=443 npm run tailscale:serve
 Tailscale Serve access is governed by your tailnet ACLs. Restrict this device
 and port to the people/devices that should have full shell control. Do not use
 Funnel for herdr-web.
+
+### Cross-machine workspaces
+
+Install Herdr on each computer and make sure ordinary, non-interactive SSH
+works over its Tailscale name:
+
+```bash
+ssh rtx5090 herdr status server --json
+```
+
+Then open RC Settings and enter `rtx5090` (or several comma-separated SSH
+targets) under **Remote Herdr hosts**. Saving installs herdr-mirror if needed,
+writes its host configuration, and starts it. Remote workspaces and agents then
+appear in RC's existing session list; input uses mirror's normal writable
+session stream.
+
+RC deliberately does not scan the tailnet. It only connects to hosts you name.
+Its generated mirror config uses `always_control = false`, so merely opening a
+remote pane from the phone does not resize that computer's PTY, and
+`close_remote_on_local_close = false`, so closing a local mirror cannot kill a
+remote agent. If `hosts.toml` already exists and was not created by RC, RC
+leaves it untouched and reports the conflict.
+
+This path is OpenSSH **over** Tailscale, not an SSH tunnel instead of
+Tailscale: WireGuard/MagicDNS supplies the private network and stable machine
+identity, while SSH supplies the authenticated process transport expected by
+herdr-mirror. A separate raw TCP Serve/Service endpoint is not required.
 
 ### Reverse proxies and allowed hosts
 

@@ -10,6 +10,7 @@ const herdr = require('./lib/herdr-client');
 const { parseAnsiScreen } = require('./lib/ansi');
 const preview = require('./lib/preview');
 const settings = require('./lib/settings');
+const remotes = require('./lib/remotes');
 const dirs = require('./lib/dirs');
 const security = require('./lib/security');
 
@@ -253,7 +254,7 @@ app.delete('/api/workspaces/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Preview (Tier 1) and Cast (Tier 2)
+// Settings, directories, and local preview
 // ---------------------------------------------------------------------------
 
 app.get('/api/dirs', async (req, res) => {
@@ -263,14 +264,34 @@ app.get('/api/dirs', async (req, res) => {
 
 app.get('/api/settings', (_req, res) => res.json(settings.load()));
 
-app.put('/api/settings', (req, res) => {
+app.put('/api/settings', async (req, res) => {
   const patch = req.body || {};
   if (patch.agentCommand !== undefined && typeof patch.agentCommand !== 'string') {
     return res.status(400).json({ error: 'agentCommand must be a string' });
   }
+  if (patch.defaultCwd !== undefined && typeof patch.defaultCwd !== 'string') {
+    return res.status(400).json({ error: 'defaultCwd must be a string' });
+  }
+  if (patch.remoteHosts !== undefined && !Array.isArray(patch.remoteHosts) && typeof patch.remoteHosts !== 'string') {
+    return res.status(400).json({ error: 'remoteHosts must be an array or comma-separated string' });
+  }
+  try {
+    if (patch.remoteHosts !== undefined) patch.remoteHosts = remotes.normalizeTargets(patch.remoteHosts);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
   const saved = settings.save(patch);
-  jlog('info', 'settings-saved', { agentCommand: saved.agentCommand });
-  res.json(saved);
+  let remoteSetup;
+  if (patch.remoteHosts !== undefined) {
+    try {
+      remoteSetup = await remotes.configure(saved.remoteHosts);
+    } catch (e) {
+      remoteSetup = { ok: false, error: e.message };
+      jlog('error', 'remote-setup-failed', { error: e.message });
+    }
+  }
+  jlog('info', 'settings-saved', { agentCommand: saved.agentCommand, remoteHosts: saved.remoteHosts.length });
+  res.json({ ...saved, remoteSetup });
 });
 
 app.get('/api/ports', async (_req, res) => {

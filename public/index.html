@@ -283,6 +283,11 @@
       <label class="fld">Default working directory
         <input id="set-cwd" placeholder="(none)" autocomplete="off" autocapitalize="off" spellcheck="false">
       </label>
+      <label class="fld">Remote Herdr hosts
+        <input id="set-remotes" placeholder="rtx5090, work-mac" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+      <p class="hint">Tailscale MagicDNS names or SSH targets. RC installs herdr-mirror and shows their workspaces in the same session list.</p>
+      <p class="hint" id="set-remotes-status"></p>
       <div class="actions">
         <button id="set-cancel">Close</button>
         <button id="set-save" class="primary">Save</button>
@@ -1029,7 +1034,7 @@ $('dir-q').addEventListener('input', () => { clearTimeout(dirTimer); dirTimer = 
 // ---------------------------------------------------------------------------
 // Settings — server-synced, so the phone and the laptop agree
 // ---------------------------------------------------------------------------
-let appSettings = { agentCommand: 'codex', defaultCwd: '' };
+let appSettings = { agentCommand: 'codex', defaultCwd: '', remoteHosts: [] };
 async function loadSettings() {
   try { appSettings = await (await fetch('/api/settings')).json(); } catch { /* defaults */ }
   return appSettings;
@@ -1038,19 +1043,37 @@ async function openSettings() {
   await loadSettings();
   $('set-cmd').value = appSettings.agentCommand || '';
   $('set-cwd').value = appSettings.defaultCwd || '';
+  $('set-remotes').value = (appSettings.remoteHosts || []).join(', ');
+  $('set-remotes-status').textContent = '';
   $('setsheet').classList.add('show');
 }
 $('setbtn').addEventListener('click', openSettings);
 $('set-cancel').addEventListener('click', () => $('setsheet').classList.remove('show'));
 $('setsheet').addEventListener('click', (e) => { if (e.target === $('setsheet')) $('setsheet').classList.remove('show'); });
 $('set-save').addEventListener('click', async () => {
-  const body = { agentCommand: $('set-cmd').value.trim() || 'codex', defaultCwd: $('set-cwd').value.trim() };
+  const body = {
+    agentCommand: $('set-cmd').value.trim() || 'codex',
+    defaultCwd: $('set-cwd').value.trim(),
+    remoteHosts: $('set-remotes').value.split(/[\n,]/).map(s => s.trim()).filter(Boolean),
+  };
+  const status = $('set-remotes-status');
+  status.textContent = 'Saving…';
   try {
-    appSettings = await (await fetch('/api/settings', {
+    const res = await fetch('/api/settings', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-    })).json();
-  } catch { /* keep local copy */ }
-  $('setsheet').classList.remove('show');
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Could not save settings');
+    appSettings = data;
+    if (data.remoteSetup?.ok === false) {
+      status.textContent = `Saved, but remote setup failed: ${data.remoteSetup.error}`;
+      return;
+    }
+    status.textContent = data.remoteSetup?.message || 'Saved';
+    setTimeout(() => $('setsheet').classList.remove('show'), 650);
+  } catch (e) {
+    status.textContent = e.message || 'Could not save settings';
+  }
 });
 loadSettings();
 
