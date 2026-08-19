@@ -703,7 +703,8 @@ window.addEventListener('resize', () => {
 // ---------------------------------------------------------------------------
 // Attention model (mirrors herdr's agent panel semantics): "done" = finished
 // while you weren't looking, cleared when you view the pane; blocked always
-// needs you. Agents sort by attention, like herdr's attention-ordered sidebar.
+// needs you. The picker itself is MRU: the agent the user selected most
+// recently stays at the top, while attention remains visible in the bell.
 const unseenDone = new Set(JSON.parse(localStorage.getItem('herdr-web-unseen') || '[]'));
 function saveUnseen() { localStorage.setItem('herdr-web-unseen', JSON.stringify([...unseenDone])); }
 function effectiveStatus(p) {
@@ -711,7 +712,35 @@ function effectiveStatus(p) {
   if (unseenDone.has(p.pane_id)) return 'done';
   return p.agent_status || 'unknown';
 }
-const ATTN_ORDER = { blocked: 0, done: 1, working: 2, idle: 3, unknown: 4 };
+const recentPanes = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('herdr-web-recent-panes') || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  }
+  catch { return {}; }
+})();
+let recentClock = Math.max(Date.now(), ...Object.values(recentPanes).filter(Number.isFinite));
+function saveRecentPanes() {
+  localStorage.setItem('herdr-web-recent-panes', JSON.stringify(recentPanes));
+}
+function touchPane(paneId) {
+  if (!paneId) return;
+  recentClock = Math.max(Date.now(), recentClock + 1);
+  recentPanes[paneId] = recentClock;
+  saveRecentPanes();
+}
+function pruneRecentPanes(validIds) {
+  const valid = new Set(validIds);
+  let changed = false;
+  for (const paneId of Object.keys(recentPanes)) {
+    if (valid.has(paneId)) continue;
+    delete recentPanes[paneId];
+    changed = true;
+  }
+  if (changed) saveRecentPanes();
+}
+if (activePane) touchPane(activePane);
+
 function attentionPanes() {
   return paneEntries().filter(({ p }) => {
     const s = effectiveStatus(p);
@@ -724,8 +753,13 @@ function markSeen(paneId) {
 
 function paneEntries() {
   const out = [];
-  for (const w of sessions) for (const p of w.panes) out.push({ w, p });
-  out.sort((a, b) => (ATTN_ORDER[effectiveStatus(a.p)] ?? 9) - (ATTN_ORDER[effectiveStatus(b.p)] ?? 9));
+  for (const w of sessions) for (const p of w.panes) out.push({ w, p, originalIndex: out.length });
+  out.sort((a, b) => {
+    const activeOrder = Number(b.p.pane_id === activePane) - Number(a.p.pane_id === activePane);
+    return activeOrder
+      || (recentPanes[b.p.pane_id] || 0) - (recentPanes[a.p.pane_id] || 0)
+      || a.originalIndex - b.originalIndex;
+  });
   return out;
 }
 
@@ -836,7 +870,7 @@ $('attn').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
-// In-app attention notices. The persistent bell and status ordering retain
+// In-app attention notices. The persistent bell and status dots retain
 // anything missed while this minimal page was not visible.
 // ---------------------------------------------------------------------------
 function paneName(p, w) {
@@ -881,7 +915,10 @@ function choosePane(paneId) {
 }
 function selectPane(paneId) {
   activePane = paneId;
-  if (paneId) markSeen(paneId);
+  if (paneId) {
+    touchPane(paneId);
+    markSeen(paneId);
+  }
   localStorage.setItem('herdr-web-pane', paneId || '');
   atBottom = true;
   histBadge.classList.remove('show');
@@ -932,6 +969,7 @@ function connect() {
         }
         sessions = m.sessions;
         const known = paneEntries().map((e) => e.p.pane_id);
+        pruneRecentPanes(known);
         if (activePane && !known.includes(activePane)) activePane = null;
         if (!activePane && known.length) selectPane(known[0]);
         else renderTabs();

@@ -1,6 +1,6 @@
 {
   "name": "herdr-web",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Mobile-first web UI for the herdr agent multiplexer \u2014 drive your coding agents from a phone browser",
   "main": "index.js",
   "directories": {
