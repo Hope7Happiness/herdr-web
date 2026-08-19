@@ -1,6 +1,6 @@
 ---
 name: herdr-rc-remote
-description: Enable, inspect, or troubleshoot Herdr phone remote control over Tailscale Serve, and connect, list, or disconnect remote Herdr panels/workspaces through an explicit Tailscale or SSH host. Use when the user says to enable/open/start Herdr remote control or phone RC, asks for its URL/status, or asks to connect/add/remove a remote Herdr panel, machine, workspace, Tailscale host, MagicDNS name, or SSH target to the unified Herdr RC pane list.
+description: Enable or troubleshoot Herdr phone remote control over Tailscale Serve; connect, list, or disconnect remote Herdr machines; and inspect, read, or control their mirrored panes through the local Herdr CLI. Use for phone RC requests, RC URL/status, Tailscale or SSH host connection, remote Herdr panels/workspaces, and routine operations on panes already connected to the unified RC list.
 ---
 
 # Herdr RC and Remote
@@ -23,6 +23,28 @@ Require `HERDR_ENV=1`. If the helper is absent, tell the user to reinstall or up
 - Disconnect a remote machine only when explicitly requested: run `disconnect <exact-ssh-target>`.
 
 Treat “panel” as the remote machine's Herdr workspaces and panes appearing in RC's ordinary agent list. Do not use `herdr --remote <target>` for this intent: that attaches a separate remote TUI and does not add the target to RC's unified pane list. Use native `--remote` only when the user explicitly asks to attach a remote Herdr TUI.
+
+## Operate connected panes locally
+
+After a host is connected, use the local Herdr CLI described by the installed `herdr` skill for routine discovery, status, and reads. Do not execute `ssh <target> herdr ...` for these operations. The mirror daemon owns the background SSH transport and exposes each remote terminal as an ordinary local pane.
+
+Discover the current IDs instead of retaining an ID from an earlier connection:
+
+```bash
+herdr workspace list
+herdr pane list --workspace <mirror-workspace-id>
+```
+
+Identify the mirror workspace by its remote-host-prefixed label and confirm its pane has a `.mirror-pane` cwd. Then use its local pane ID:
+
+```bash
+herdr agent get <mirror-pane-id>
+herdr agent read <mirror-pane-id> --source recent-unwrapped --lines 120
+# If it has no recognized agent:
+herdr pane read <mirror-pane-id> --source recent-unwrapped --lines 120
+```
+
+Use local `herdr agent` or `herdr pane` control commands against that mirror pane ID when the user requests interaction. Reserve direct SSH for initial connection preflight or explicit transport diagnosis. If the mirror workspace is absent, diagnose or reconnect with the helper rather than bypassing it with per-operation SSH.
 
 ## Connection rules
 

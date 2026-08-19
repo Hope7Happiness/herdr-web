@@ -84,9 +84,12 @@ herdr plugin install Hope7Happiness/herdr-web
 The plugin's startup hook launches the bridge on `http://127.0.0.1:7930`
 whenever herdr starts. From Herdr's plugin actions, choose **Set up phone RC
 with Tailscale** to perform the remaining setup with one click. Installation
-also places the `herdr-rc-remote` skill in Codex's skill directory, so new
-Codex sessions understand requests such as “enable Herdr remote control” and
-“connect the Herdr panel on SSH host `rtx5090`”.
+also installs Herdr's version-matched base skill and the `herdr-rc-remote`
+extension in Codex's skill directory. New Codex sessions therefore understand
+both native pane/workspace operations and requests such as “enable Herdr remote
+control” or “connect the Herdr panel on SSH host `rtx5090`”. Once connected,
+agents read the local mirror pane through Herdr's native CLI instead of opening
+a new SSH command for each operation.
 
 ### Standalone
 
