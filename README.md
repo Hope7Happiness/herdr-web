@@ -165,6 +165,12 @@ remote pane from the phone does not resize that computer's PTY, and
 remote agent. If `hosts.toml` already exists and was not created by RC, RC
 leaves it untouched and reports the conflict.
 
+The mirror executable runs only on the RC machine. Remote machines never
+receive that binary: they may use any OS/CPU architecture supported by Herdr,
+as long as their Herdr protocol is compatible. RC pins mirror's published
+`v0.2.2` release, whose installer selects the native macOS/Linux x86_64/ARM64
+asset for the RC machine itself.
+
 This path is OpenSSH **over** Tailscale, not an SSH tunnel instead of
 Tailscale: WireGuard/MagicDNS supplies the private network and stable machine
 identity, while SSH supplies the authenticated process transport expected by

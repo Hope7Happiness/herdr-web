@@ -35,7 +35,7 @@ test('configures and starts mirror without reinstalling an enabled plugin', asyn
   const run = async (args) => {
     calls.push(args);
     if (args[0] === 'plugin' && args[1] === 'list') {
-      return { stdout: JSON.stringify({ result: { plugins: [{ plugin_id: 'mirror', enabled: true }] } }) };
+      return { stdout: JSON.stringify({ result: { plugins: [{ plugin_id: 'mirror', enabled: true, version: '0.2.2' }] } }) };
     }
     return { stdout: '' };
   };
@@ -46,6 +46,23 @@ test('configures and starts mirror without reinstalling an enabled plugin', asyn
   assert.match(fs.readFileSync(file, 'utf8'), /target = "rtx5090"/);
   assert.deepEqual(calls.at(-1), ['plugin', 'action', 'invoke', 'start', '--plugin', 'mirror']);
   assert.equal(calls.some((args) => args[1] === 'install'), false);
+});
+
+test('replaces an unverified mirror build with the pinned cross-platform release', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-rc-remotes-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const calls = [];
+  const run = async (args) => {
+    calls.push(args);
+    if (args[0] === 'plugin' && args[1] === 'list') {
+      return { stdout: JSON.stringify({ result: { plugins: [{ plugin_id: 'mirror', enabled: false, version: '0.3.0' }] } }) };
+    }
+    return { stdout: '' };
+  };
+
+  const result = await configureNow(['linux-x86'], { configFile: path.join(dir, 'hosts.toml'), run });
+  assert.equal(result.installed, true);
+  assert.deepEqual(calls[1], ['plugin', 'install', 'nikok6/herdr-mirror', '--ref', 'v0.2.2', '--yes']);
 });
 
 test('never overwrites a user-managed mirror config', async (t) => {
