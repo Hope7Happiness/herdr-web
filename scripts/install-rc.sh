@@ -29,8 +29,14 @@ fi
 echo "Installing phone RC plugin from ${PLUGIN_REPO}@${PLUGIN_REF}..."
 "$HERDR_CMD" plugin install "$PLUGIN_REPO" --ref "$PLUGIN_REF" --yes
 
-echo "Installing cross-machine workspace support..."
-"$HERDR_CMD" plugin install nikok6/herdr-mirror --ref v0.2.2 --yes
+# v0.5.x installed herdr-mirror as a second plugin. v0.6 vendors the same
+# source and owns its lifecycle. Only migrate configurations RC itself wrote;
+# a user-managed mirror plugin is never disabled here.
+mirror_config="$HOME/.config/herdr/plugins/config/mirror/hosts.toml"
+if [ -f "$mirror_config" ] && head -n 1 "$mirror_config" | grep -qx '# Managed by hope7happiness.herdr-web'; then
+  "$HERDR_CMD" plugin action invoke pause --plugin mirror >/dev/null 2>&1 || true
+  "$HERDR_CMD" plugin disable mirror >/dev/null 2>&1 || true
+fi
 
 echo "Starting RC and configuring private Tailscale access..."
 invoke_json="$("$HERDR_CMD" plugin action invoke "$ACTION_ID")"

@@ -33,7 +33,8 @@ Agent-to-agent coordination: [docs/agent-coordination.md](docs/agent-coordinatio
 - **Smooth scrollback** — history is prefetched above the live screen in one
   scroll container; swiping into the past is plain native scrolling.
 - **Quick keys + input** — Esc, Tab, ⇧Tab, Ctrl-C, arrows, Enter; text
-  submits atomically via herdr's `agent.prompt` (no half-pasted prompts).
+  uses herdr's `agent.prompt` locally and an echo-confirmed submit handshake
+  for mirrored remote panes, so a control-session handoff cannot drop Enter.
 - **Directory picker** — `📁 cd` finds projects by zoxide frecency, git repos
   and open panes, so you never type a path on a phone.
 - **New Codex sessions** — create a pane in a selected project with `codex` as
@@ -63,8 +64,8 @@ Demos: [desktop, side by side](docs/demos/desktop-browser.md) ·
 ### One-command RC setup
 
 With Herdr running and Tailscale installed and signed in, this installs the RC
-and herdr-mirror plugins, starts the bridge, configures a private Tailscale
-Serve route, and prints the phone URL:
+plugin (including its vendored herdr-mirror source), starts the bridge,
+configures a private Tailscale Serve route, and prints the phone URL:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Hope7Happiness/herdr-web/master/scripts/install-rc.sh | bash
@@ -153,7 +154,7 @@ ssh rtx5090 herdr status server --json
 ```
 
 Then open RC Settings and enter `rtx5090` (or several comma-separated SSH
-targets) under **Remote Herdr hosts**. Saving installs herdr-mirror if needed,
+targets) under **Remote Herdr hosts**. Saving prepares the vendored mirror,
 writes its host configuration, and starts it. Remote workspaces and agents then
 appear in RC's existing session list; input uses mirror's normal writable
 session stream.
@@ -167,9 +168,11 @@ leaves it untouched and reports the conflict.
 
 The mirror executable runs only on the RC machine. Remote machines never
 receive that binary: they may use any OS/CPU architecture supported by Herdr,
-as long as their Herdr protocol is compatible. RC pins mirror's published
-`v0.2.2` release, whose installer selects the native macOS/Linux x86_64/ARM64
-asset for the RC machine itself.
+as long as their Herdr protocol is compatible. RC vendors the MIT-licensed
+`v0.2.2` source under `vendor/herdr-mirror`. It builds that source when Cargo is
+available; otherwise it downloads an RC-built, checksum-verified native asset
+for macOS/Linux on x86_64/ARM64. The vendored source and license make the build
+auditable and independent of upstream release binaries.
 
 This path is OpenSSH **over** Tailscale, not an SSH tunnel instead of
 Tailscale: WireGuard/MagicDNS supplies the private network and stable machine
@@ -201,8 +204,10 @@ the local bridge.
  herdr-web bridge :7930
    server.js ── lib/ansi.js (ANSI → locally wrapped DOM rows)
    │            lib/size-driver.js (optional shared PTY resize)
-   ▼  JSON socket (session.snapshot, events, agent.prompt, keys)
+   ▼  JSON socket (session.snapshot, events, prompts, keys)
  herdr daemon ──▶ PTY panes (Codex agents, …)
+   │
+   └── vendored mirror ── SSH over Tailscale ──▶ remote Herdr PTYs
 ```
 
 herdr's server owns the PTYs and already runs a full terminal emulator, so

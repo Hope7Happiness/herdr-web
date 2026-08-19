@@ -10,6 +10,7 @@ const {
   normalizeTargets,
   renderManagedConfig,
   configureNow,
+  ensureMirror,
 } = require('../lib/remotes');
 
 test('normalizes comma/newline-separated hosts and removes duplicates', () => {
@@ -27,42 +28,38 @@ test('renders conservative mirror defaults and unique TOML host keys', () => {
   assert.match(config, /target = "alice@work:22"/);
 });
 
-test('configures and starts mirror without reinstalling an enabled plugin', async (t) => {
+test('configures and starts the vendored mirror', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-rc-remotes-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'hosts.toml');
   const calls = [];
-  const run = async (args) => {
-    calls.push(args);
-    if (args[0] === 'plugin' && args[1] === 'list') {
-      return { stdout: JSON.stringify({ result: { plugins: [{ plugin_id: 'mirror', enabled: true, version: '0.2.2' }] } }) };
-    }
-    return { stdout: '' };
-  };
+  const run = async (args) => { calls.push(args); return { stdout: '' }; };
 
-  const result = await configureNow(['rtx5090'], { configFile: file, run });
+  const result = await configureNow(['rtx5090'], { configFile: file, run, ensure: async () => false });
   assert.equal(result.hosts, 1);
   assert.equal(result.installed, false);
   assert.match(fs.readFileSync(file, 'utf8'), /target = "rtx5090"/);
-  assert.deepEqual(calls.at(-1), ['plugin', 'action', 'invoke', 'start', '--plugin', 'mirror']);
-  assert.equal(calls.some((args) => args[1] === 'install'), false);
+  assert.deepEqual(calls, [['start']]);
 });
 
-test('replaces an unverified mirror build with the pinned cross-platform release', async (t) => {
+test('installs the vendored mirror when its local executable is absent', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-rc-remotes-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const calls = [];
-  const run = async (args) => {
-    calls.push(args);
-    if (args[0] === 'plugin' && args[1] === 'list') {
-      return { stdout: JSON.stringify({ result: { plugins: [{ plugin_id: 'mirror', enabled: false, version: '0.3.0' }] } }) };
-    }
-    return { stdout: '' };
-  };
+  const file = path.join(dir, 'herdr-mirror');
+  let installs = 0;
 
-  const result = await configureNow(['linux-x86'], { configFile: path.join(dir, 'hosts.toml'), run });
-  assert.equal(result.installed, true);
-  assert.deepEqual(calls[1], ['plugin', 'install', 'nikok6/herdr-mirror', '--ref', 'v0.2.2', '--yes']);
+  const installed = await ensureMirror({
+    mirrorFile: file,
+    install: async () => {
+      installs++;
+      fs.writeFileSync(file, '#!/bin/sh\n');
+      fs.chmodSync(file, 0o700);
+    },
+  });
+  assert.equal(installed, true);
+  assert.equal(installs, 1);
+  assert.equal(await ensureMirror({ mirrorFile: file, install: async () => { installs++; } }), false);
+  assert.equal(installs, 1);
 });
 
 test('never overwrites a user-managed mirror config', async (t) => {
@@ -110,5 +107,5 @@ test('clearing RC-managed hosts removes config and pauses mirror', async (t) => 
   });
   assert.equal(result.active, false);
   assert.equal(fs.existsSync(file), false);
-  assert.deepEqual(calls, [['plugin', 'action', 'invoke', 'pause', '--plugin', 'mirror']]);
+  assert.deepEqual(calls, [['pause']]);
 });

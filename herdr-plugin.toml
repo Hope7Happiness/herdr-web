@@ -1,12 +1,15 @@
 id = "hope7happiness.herdr-web"
 name = "herdr-web"
-version = "0.5.1"
+version = "0.6.0"
 min_herdr_version = "0.7.0"
 description = "Mobile-first web UI: drive your agents from a phone browser"
 platforms = ["linux", "macos"]
 
 [[build]]
 command = ["npm", "install", "--no-fund", "--no-audit"]
+
+[[build]]
+command = ["bash", "scripts/install-vendored-mirror.sh"]
 
 # Startup hooks are one-shot (not supervised daemons) — this one ensures the
 # bridge server is running and exits. See scripts/plugin-start.sh.
@@ -42,3 +45,42 @@ id = "tailscale-stop"
 title = "Stop herdr-web Tailscale listener"
 contexts = ["workspace"]
 command = ["bash", "scripts/tailscale.sh", "off"]
+
+[[actions]]
+id = "mirror-start"
+title = "Remote workspaces: start / resume"
+command = ["./vendor/herdr-mirror/target/release/herdr-mirror", "start"]
+
+[[actions]]
+id = "mirror-pause"
+title = "Remote workspaces: pause"
+command = ["./vendor/herdr-mirror/target/release/herdr-mirror", "pause"]
+
+[[actions]]
+id = "mirror-status"
+title = "Remote workspaces: status"
+command = ["./vendor/herdr-mirror/target/release/herdr-mirror", "status"]
+
+[[actions]]
+id = "mirror-remote-new-workspace"
+title = "Remote workspaces: new workspace"
+command = ["./vendor/herdr-mirror/target/release/herdr-mirror", "remote-workspace"]
+
+[[actions]]
+id = "mirror-remote-new-tab"
+title = "Remote workspaces: new tab"
+command = ["./vendor/herdr-mirror/target/release/herdr-mirror", "remote-tab"]
+
+[[actions]]
+id = "mirror-remote-split-right"
+title = "Remote workspaces: split right"
+command = ["./vendor/herdr-mirror/target/release/herdr-mirror", "remote-split", "right"]
+
+[[actions]]
+id = "mirror-remote-split-down"
+title = "Remote workspaces: split down"
+command = ["./vendor/herdr-mirror/target/release/herdr-mirror", "remote-split", "down"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./vendor/herdr-mirror/target/release/herdr-mirror", "ensure"]

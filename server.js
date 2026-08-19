@@ -11,6 +11,7 @@ const { parseAnsiScreen } = require('./lib/ansi');
 const preview = require('./lib/preview');
 const settings = require('./lib/settings');
 const remotes = require('./lib/remotes');
+const input = require('./lib/input');
 const dirs = require('./lib/dirs');
 const security = require('./lib/security');
 
@@ -373,16 +374,8 @@ wss.on('connection', (ws) => {
           break;
         }
         case 'submit': {
-          // Prefer herdr's agent.prompt — it submits text+Enter while
-          // honoring the pane's live bracketed-paste mode, which raw
-          // send_input does not (drafts can get stuck in an agent input box).
-          // Falls back to one atomic pane.send_input for plain shell panes.
           if (msg.text) {
-            try {
-              await herdr.request('agent.prompt', { target: msg.pane, text: msg.text });
-            } catch (e) {
-              await herdr.request('pane.send_input', { pane_id: msg.pane, text: msg.text, keys: ['enter'] });
-            }
+            await input.submitPane(herdr, state.snapshot, msg.pane, msg.text);
           } else {
             await herdr.request('pane.send_keys', { pane_id: msg.pane, keys: ['enter'] });
           }
