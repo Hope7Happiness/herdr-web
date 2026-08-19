@@ -27,35 +27,37 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  /* ---- tab bar ---- */
-  /* Tabs scroll in their own strip; conn dot, bell, and + stay pinned. */
+  /* ---- agent bar ---- */
   #tabbar {
     display: flex; gap: 6px; padding: 8px 8px 6px;
     overflow: hidden; flex: none;
     border-bottom: 1px solid var(--border); background: var(--bg2);
     align-items: center;
   }
-  #tabs { overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: none; }
-  #tabs::-webkit-scrollbar { display: none; }
-  .tab {
+  #agentpick {
     display: flex; align-items: center; gap: 7px;
-    padding: 7px 12px; border-radius: 8px; flex: none;
+    padding: 6px 9px; border-radius: 8px; flex: 1; min-width: 0;
     background: var(--bg3); border: 1px solid var(--border);
-    max-width: 60vw; cursor: pointer; user-select: none;
+    cursor: pointer; user-select: none;
   }
-  .tab.active { border-color: var(--accent); background: #1c2a41; }
-  .tab .dot {
+  #agentpick .txt { flex: 1; min-width: 0; }
+  #agentpick .lbl, .agentrow .lbl {
+    font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #agentpick .sub, .agentrow .sub {
+    font-size: 10px; color: var(--fg-dim); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  #agentpick .chev { color: var(--fg-dim); flex: none; font-size: 12px; }
+  .status-dot {
     width: 9px; height: 9px; border-radius: 50%; flex: none;
     background: var(--st-unknown);
   }
-  .tab .dot.working { background: var(--st-working); animation: pulse 1.2s ease-in-out infinite; }
-  .tab .dot.blocked { background: var(--st-blocked); animation: pulse 0.8s ease-in-out infinite; }
-  .tab .dot.done { background: var(--st-done); }
-  .tab .dot.idle { background: var(--st-idle); }
+  .status-dot.working { background: var(--st-working); animation: pulse 1.2s ease-in-out infinite; }
+  .status-dot.blocked { background: var(--st-blocked); animation: pulse 0.8s ease-in-out infinite; }
+  .status-dot.done { background: var(--st-done); }
+  .status-dot.idle { background: var(--st-idle); }
   @keyframes pulse { 50% { opacity: 0.35; } }
-  .tab .lbl { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tab .sub { font-size: 10px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
-  .tab .txt { min-width: 0; }
   .tab-btn {
     flex: none; width: 34px; height: 34px; border-radius: 8px;
     background: var(--bg3); border: 1px solid var(--border); color: var(--fg-dim);
@@ -188,6 +190,18 @@
     display: flex; flex-direction: column; gap: 12px;
   }
   #sheet h2, .sheet h2 { font-size: 15px; font-weight: 600; }
+  #agent-list {
+    max-height: min(62vh, 520px); overflow-y: auto;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .agentrow {
+    display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;
+    padding: 10px 11px; border-radius: 9px; cursor: pointer;
+    background: var(--bg3); border: 1px solid var(--border);
+  }
+  .agentrow.active { border-color: var(--accent); background: #1c2a41; }
+  .agentrow .txt { flex: 1; min-width: 0; }
+  .agentrow .current { flex: none; color: var(--accent); font-size: 11px; }
   .fld { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--fg-dim); }
   .hint { font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
   #dir-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
@@ -224,7 +238,7 @@
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
       <span>0</span>
     </div>
-    <div id="tabs" style="display:flex;gap:6px;"></div>
+    <div id="agentpick" role="button" tabindex="0" aria-label="Choose agent" aria-expanded="false"></div>
     <div class="tab-btn" id="pvbtn" title="Preview a local port">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>
     </div>
@@ -262,6 +276,14 @@
   </div>
 
   <div id="toast"></div>
+
+  <div id="agentsheet" class="sheet">
+    <div class="panel">
+      <h2>Agents</h2>
+      <div id="agent-list"></div>
+      <div class="actions"><button id="agent-cancel">Close</button></div>
+    </div>
+  </div>
 
   <div id="dirsheet" class="sheet">
     <div class="panel">
@@ -342,7 +364,8 @@ function colorOf(c) {
 // State
 // ---------------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
-const term = $('term'), tabsEl = $('tabs'), histBadge = $('livekey'), emptyEl = $('empty');
+const term = $('term'), agentPickEl = $('agentpick'), agentListEl = $('agent-list');
+const histBadge = $('livekey'), emptyEl = $('empty');
 let ws = null, wsOk = false;
 let sessions = [];          // from server
 let activePane = localStorage.getItem('herdr-web-pane') || null;
@@ -676,11 +699,11 @@ window.addEventListener('resize', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tabs
+// Agent picker
 // ---------------------------------------------------------------------------
 // Attention model (mirrors herdr's agent panel semantics): "done" = finished
 // while you weren't looking, cleared when you view the pane; blocked always
-// needs you. Tabs sort by attention, like herdr's attention-ordered sidebar.
+// needs you. Agents sort by attention, like herdr's attention-ordered sidebar.
 const unseenDone = new Set(JSON.parse(localStorage.getItem('herdr-web-unseen') || '[]'));
 function saveUnseen() { localStorage.setItem('herdr-web-unseen', JSON.stringify([...unseenDone])); }
 function effectiveStatus(p) {
@@ -707,32 +730,92 @@ function paneEntries() {
 }
 
 function renderTabs() {
-  const frag = document.createDocumentFragment();
-  for (const { w, p } of paneEntries()) {
-    const st = effectiveStatus(p);
-    const tab = document.createElement('div');
-    tab.className = 'tab' + (p.pane_id === activePane ? ' active' : '');
-    tab.dataset.pane = p.pane_id;
+  const entries = paneEntries();
+  const current = entries.find(({ p }) => p.pane_id === activePane);
+  agentPickEl.replaceChildren();
+  if (current) {
+    const st = effectiveStatus(current.p);
     const dot = document.createElement('div');
-    dot.className = 'dot ' + st;
+    dot.className = 'status-dot ' + st;
     const txt = document.createElement('div');
     txt.className = 'txt';
     const lbl = document.createElement('div');
     lbl.className = 'lbl';
-    lbl.textContent = (p.name || p.agent) ? `${p.name || p.agent} · ${w.label}` : w.label;
+    lbl.textContent = paneLabel(current.p, current.w);
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = paneSubtitle(current.p, st);
+    txt.append(lbl, sub);
+    const chev = document.createElement('span');
+    chev.className = 'chev';
+    chev.textContent = `▾ ${entries.length}`;
+    agentPickEl.append(dot, txt, chev);
+  } else {
+    const txt = document.createElement('div');
+    txt.className = 'txt';
+    txt.textContent = entries.length ? 'Choose agent' : 'No agents';
+    const chev = document.createElement('span');
+    chev.className = 'chev';
+    chev.textContent = `▾ ${entries.length}`;
+    agentPickEl.append(txt, chev);
+  }
+
+  const frag = document.createDocumentFragment();
+  for (const { w, p } of entries) {
+    const st = effectiveStatus(p);
+    const row = document.createElement('div');
+    row.className = 'agentrow' + (p.pane_id === activePane ? ' active' : '');
+    row.dataset.pane = p.pane_id;
+    const dot = document.createElement('div');
+    dot.className = 'status-dot ' + st;
+    const txt = document.createElement('div');
+    txt.className = 'txt';
+    const lbl = document.createElement('div');
+    lbl.className = 'lbl';
+    lbl.textContent = paneLabel(p, w);
     txt.appendChild(lbl);
     const sub = document.createElement('div');
     sub.className = 'sub';
-    sub.textContent = st === 'blocked' ? 'needs input' : st === 'done' ? 'done — unseen' : (p.title || '');
+    sub.textContent = paneSubtitle(p, st);
     if (sub.textContent) txt.appendChild(sub);
-    tab.append(dot, txt);
-    tab.addEventListener('click', () => selectPane(p.pane_id));
-    frag.appendChild(tab);
+    row.append(dot, txt);
+    if (p.pane_id === activePane) {
+      const badge = document.createElement('span');
+      badge.className = 'current';
+      badge.textContent = 'current';
+      row.appendChild(badge);
+    }
+    row.addEventListener('click', () => choosePane(p.pane_id));
+    frag.appendChild(row);
   }
-  tabsEl.replaceChildren(frag);
+  agentListEl.replaceChildren(frag);
   renderAttnChip();
   emptyEl.style.display = activePane ? 'none' : 'flex';
 }
+
+function paneLabel(p, w) {
+  return (p.name || p.agent) ? `${p.name || p.agent} · ${w.label}` : w.label;
+}
+function paneSubtitle(p, st) {
+  return st === 'blocked' ? 'needs input' : st === 'done' ? 'done — unseen' : (p.title || st);
+}
+
+function openAgentPicker() {
+  renderTabs();
+  $('agentsheet').classList.add('show');
+  agentPickEl.setAttribute('aria-expanded', 'true');
+  requestAnimationFrame(() => agentListEl.querySelector('.active')?.scrollIntoView({ block: 'nearest' }));
+}
+function closeAgentPicker() {
+  $('agentsheet').classList.remove('show');
+  agentPickEl.setAttribute('aria-expanded', 'false');
+}
+agentPickEl.addEventListener('click', openAgentPicker);
+agentPickEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAgentPicker(); }
+});
+$('agent-cancel').addEventListener('click', closeAgentPicker);
+$('agentsheet').addEventListener('click', (e) => { if (e.target === $('agentsheet')) closeAgentPicker(); });
 
 // Attention chip: count + one-tap jump to the next agent needing you
 // (herdr's next-agent navigation, phone-sized).
@@ -749,7 +832,7 @@ $('attn').addEventListener('click', () => {
   if (!panes.length) return;
   const ids = panes.map(({ p }) => p.pane_id);
   const next = ids[(ids.indexOf(activePane) + 1) % ids.length];
-  selectPane(next);
+  choosePane(next);
 });
 
 // ---------------------------------------------------------------------------
@@ -789,8 +872,13 @@ function showToast(text, paneId, urgent) {
 }
 $('toast').addEventListener('click', () => {
   $('toast').classList.remove('show');
-  if (toastPane) selectPane(toastPane);
+  if (toastPane) choosePane(toastPane);
 });
+function choosePane(paneId) {
+  closeAgentPicker();
+  setView('term');
+  selectPane(paneId);
+}
 function selectPane(paneId) {
   activePane = paneId;
   if (paneId) markSeen(paneId);
