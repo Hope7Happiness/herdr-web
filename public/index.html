@@ -1240,17 +1240,20 @@ async function loadPorts() {
   }
   // The port you are viewing leads — otherwise it can sit off-screen in a
   // long strip, which is where it matters most.
-  if (pvPort && !ports.some((p) => p.port === pvPort)) ports.unshift({ port: pvPort, process: null });
+  if (pvPort && !ports.some((p) => p.port === pvPort)) ports.unshift({ port: pvPort, process: null, title: null });
   ports.sort((a, b) => (b.port === pvPort) - (a.port === pvPort));
   for (const p of ports) {
     const c = document.createElement('div');
     c.className = 'chip' + (p.port === pvPort ? ' on' : '');
     c.append(String(p.port));
-    if (p.process) {
-      const processName = document.createElement('span');
-      processName.className = 'sub';
-      processName.textContent = p.process;
-      c.appendChild(processName);
+    const description = p.title || p.process;
+    if (description) {
+      const label = document.createElement('span');
+      label.className = 'sub';
+      const chars = [...description];
+      label.textContent = chars.length > 14 ? chars.slice(0, 14).join('') + '…' : description;
+      label.title = p.title || '';
+      c.appendChild(label);
     }
     c.addEventListener('click', () => selectPort(p.port));
     bar.appendChild(c);

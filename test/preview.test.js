@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { previewBase, rewriteLocation, shim } = require('../lib/preview');
+const { previewBase, rewriteLocation, shim, extractTitle } = require('../lib/preview');
 
 test('uses the upstream document directory for relative preview navigation', () => {
   assert.equal(previewBase(5173, '/'), '/p/5173/');
@@ -30,4 +30,9 @@ test('preview shim handles document navigation in addition to API calls', () => 
   assert.match(script, /addEventListener\('submit'/);
   assert.match(script, /location\.assign\(n\)/);
   assert.match(script, /window\.open=function/);
+});
+
+test('extracts a compact human-facing title from preview HTML', () => {
+  assert.equal(extractTitle('<html><head><title>  HerdR &amp; Codex  </title></head></html>'), 'HerdR & Codex');
+  assert.equal(extractTitle('<html><body>no title</body></html>'), null);
 });
