@@ -1,6 +1,6 @@
 id = "hope7happiness.herdr-web"
 name = "herdr-web"
-version = "0.8.0"
+version = "0.8.1"
 min_herdr_version = "0.7.0"
 description = "Mobile-first web UI: drive your agents from a phone browser"
 platforms = ["linux", "macos"]
