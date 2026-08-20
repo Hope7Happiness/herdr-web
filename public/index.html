@@ -530,11 +530,20 @@ function scrollToLive() {
   term.scrollTo({ top: term.scrollHeight, behavior: 'smooth' });
 }
 function pinBottom() { term.scrollTop = term.scrollHeight; }
+let pinFrame = 0;
+function pinBottomSoon() {
+  if (pinFrame) return;
+  pinFrame = requestAnimationFrame(() => {
+    pinFrame = 0;
+    if (atBottom) pinBottom();
+  });
+}
 function jumpLive() { // instant re-pin (used after sending input)
   atBottom = true;
   histBadge.classList.remove('show');
   renderHist();
   pinBottom();
+  pinBottomSoon();
 }
 
 function rowText(spans) {
@@ -591,6 +600,7 @@ function renderHist() {
   if (!atBottom || !lastRecent) return;
   renderInto(histEl, cutOverlap(lastRecent, liveRows));
   pinBottom();
+  pinBottomSoon();
 }
 
 // ...with one exception: after the runtime re-wraps, the frozen block is frozen
@@ -627,6 +637,7 @@ function onScreen(rows) {
   renderInto(liveEl, rows);
   fitFont();
   if (atBottom) pinBottom();
+  pinBottomSoon();
   // This screen is the first one drawn at the new width, so the cached history
   // above it is wrapped for the old one: re-read it now, whether or not we are
   // pinned at the bottom.
@@ -926,6 +937,7 @@ function selectPane(paneId) {
   lastRecent = null;
   histEl.replaceChildren();
   liveEl.replaceChildren();
+  pinBottomSoon();
   renderTabs();
   if (wsOk && paneId) {
     send({ type: 'watch', pane: paneId });
