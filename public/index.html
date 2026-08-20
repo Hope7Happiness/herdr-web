@@ -8,19 +8,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content">
 <title>herdr-web</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#090b0f">
 <style>
   :root {
-    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
-    --fg: #e6edf3; --fg-dim: #8b949e;
-    --accent: #2f81f7; --border: #30363d;
-    --st-working: #3fb950; --st-blocked: #f0883e; --st-done: #2f81f7;
-    --st-idle: #6e7681; --st-unknown: #484f58;
+    --bg: #090b0f; --bg2: #11151a; --bg3: #191e25; --surface: #20262d;
+    --fg: #f3f1ec; --fg-dim: #919ba7; --fg-faint: #5e6873;
+    --accent: #55b8ff; --accent-strong: #198cff; --border: #2b3139;
+    --st-working: #48d597; --st-blocked: #ffb454; --st-done: #6ba8ff;
+    --st-idle: #707a85; --st-unknown: #4d5660; --danger: #ff7068;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
   body {
     background: var(--bg); color: var(--fg);
-    font-family: system-ui, sans-serif;
+    font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
     display: flex; flex-direction: column;
     height: 100dvh;
     padding-bottom: env(safe-area-inset-bottom);
@@ -29,17 +30,18 @@
 
   /* ---- agent bar ---- */
   #tabbar {
-    display: flex; gap: 6px; padding: 8px 8px 6px;
+    position: relative; display: flex; gap: 5px; padding: 7px 8px;
     overflow: hidden; flex: none;
     border-bottom: 1px solid var(--border); background: var(--bg2);
     align-items: center;
   }
   #agentpick {
-    display: flex; align-items: center; gap: 7px;
-    padding: 6px 9px; border-radius: 8px; flex: 1; min-width: 0;
-    background: var(--bg3); border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px 5px 13px; border-radius: 6px; flex: 1; min-width: 0;
+    min-height: 38px; background: var(--bg3); border: 1px solid transparent;
     cursor: pointer; user-select: none;
   }
+  #agentpick:hover, #agentpick:focus-visible { border-color: var(--border); outline: none; }
   #agentpick .txt { flex: 1; min-width: 0; }
   #agentpick .lbl, .agentrow .lbl {
     font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -48,7 +50,7 @@
     font-size: 10px; color: var(--fg-dim); white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
   }
-  #agentpick .chev { color: var(--fg-dim); flex: none; font-size: 12px; }
+  #agentpick .chev { color: var(--fg-faint); flex: none; display: flex; align-items: center; gap: 2px; font: 11px/1 ui-monospace, monospace; }
   .status-dot {
     width: 9px; height: 9px; border-radius: 50%; flex: none;
     background: var(--st-unknown);
@@ -59,28 +61,32 @@
   .status-dot.idle { background: var(--st-idle); }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .tab-btn {
-    flex: none; width: 34px; height: 34px; border-radius: 8px;
-    background: var(--bg3); border: 1px solid var(--border); color: var(--fg-dim);
-    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    flex: none; width: 38px; height: 38px; border-radius: 6px;
+    background: transparent; border: 1px solid transparent; color: var(--fg-dim);
+    padding: 0; display: flex; align-items: center; justify-content: center; cursor: pointer;
   }
-  #conn { width: 8px; height: 8px; border-radius: 50%; background: #f85149; flex: none; margin-left: 2px; }
+  .tab-btn:hover, .tab-btn:focus-visible { background: var(--bg3); border-color: var(--border); color: var(--fg); outline: none; }
+  .tab-btn:active { background: var(--surface); transform: translateY(1px); }
+  #conn { position: absolute; z-index: 2; left: 13px; top: 50%; width: 4px; height: 18px; transform: translateY(-50%); border-radius: 2px; background: var(--danger); pointer-events: none; }
   #conn.ok { background: var(--st-working); animation: none; }
   #attn {
-    flex: none; align-items: center; gap: 5px; padding: 6px 10px; cursor: pointer;
-    border-radius: 8px; background: var(--bg3); border: 1px solid var(--st-done);
-    color: var(--st-done); font-size: 13px; font-weight: 600; user-select: none;
+    position: relative; flex: none; width: 38px; height: 38px; align-items: center; justify-content: center; cursor: pointer;
+    border-radius: 6px; background: transparent; border: 1px solid transparent;
+    padding: 0; color: var(--st-done); user-select: none;
   }
+  #attn span { position: absolute; right: 1px; top: 1px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: var(--st-done); color: #07111a; font: 700 9px/15px ui-monospace, monospace; text-align: center; }
   #attn.blocked { border-color: var(--st-blocked); color: var(--st-blocked); animation: pulse 1s ease-in-out infinite; }
+  #attn.blocked span { background: var(--st-blocked); color: #1a1005; }
   #toast {
     position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 30;
-    background: var(--bg3); border: 1px solid var(--border); border-left: 4px solid var(--st-blocked);
-    border-radius: 10px; padding: 10px 16px; font-size: 14px; display: none;
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--st-blocked);
+    border-radius: 6px; padding: 10px 14px; font-size: 13px; display: none;
     max-width: 90vw; box-shadow: 0 4px 14px rgba(0,0,0,.5); cursor: pointer;
   }
   #toast.show { display: block; }
 
   /* ---- terminal ---- */
-  #termwrap { flex: 1; min-height: 0; position: relative; background: var(--bg); }
+  #termwrap { flex: 1; min-height: 0; position: relative; background: var(--bg); box-shadow: inset 0 1px rgba(255,255,255,.02); }
   #term {
     height: 100%; overflow-y: auto; overflow-x: hidden;
     font-family: 'Cascadia Mono', 'Roboto Mono', ui-monospace, monospace;
@@ -112,9 +118,15 @@
      dingbats, symbols) — stops lines jumping as agent spinners cycle. */
   #term .g { display: inline-block; width: var(--cellw, 1ch); text-align: center; overflow: hidden; vertical-align: bottom; }
   #term .g2 { width: calc(var(--cellw, 1ch) * 2); }
-  /* Always visible so the keys row never shifts; greyed when already live. */
-  #livekey { color: var(--fg-dim); opacity: 0.55; }
-  #livekey.show { color: var(--accent); border-color: var(--accent); opacity: 1; }
+  #livekey {
+    position: absolute; z-index: 4; right: 10px; bottom: 10px; display: none;
+    height: 34px; padding: 0 11px; align-items: center; gap: 5px; border-radius: 17px;
+    background: var(--surface); color: var(--accent); border: 1px solid #3b759c;
+    box-shadow: 0 5px 18px rgba(0,0,0,.35); font: 600 11px/1 inherit; cursor: pointer;
+  }
+  #livekey.show { display: flex; animation: live-in 140ms ease-out; }
+  #termwrap.previewing #livekey { display: none; }
+  @keyframes live-in { from { opacity: 0; transform: translateY(5px); } }
   #empty {
     position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px;
     align-items: center; justify-content: center; color: var(--fg-dim); font-size: 14px;
@@ -156,28 +168,33 @@
   /* ---- footer ---- */
   #footer { flex: none; background: var(--bg2); border-top: 1px solid var(--border); }
   #quickkeys {
-    display: flex; gap: 6px; padding: 6px 8px 2px; overflow-x: auto; scrollbar-width: none;
+    display: grid; grid-template-columns: 38px 36px 36px 42px 34px repeat(4, minmax(28px, 1fr)) 36px;
+    gap: 3px; padding: 6px 6px 3px; overflow: hidden;
   }
-  #quickkeys::-webkit-scrollbar { display: none; }
   .qk {
-    flex: none; padding: 8px 13px; border-radius: 8px; font-size: 13px;
-    background: var(--bg3); border: 1px solid var(--border); color: var(--fg);
-    cursor: pointer; user-select: none; font-family: ui-monospace, monospace;
+    min-width: 0; width: 100%; height: 36px; padding: 0 3px; border-radius: 5px;
+    background: var(--bg3); border: 1px solid var(--border); color: #d6d9dc;
+    display: flex; align-items: center; justify-content: center; gap: 3px;
+    cursor: pointer; user-select: none; font: 600 10.5px/1 ui-monospace, monospace;
   }
-  .qk:active { background: #2c3440; }
-  #inputrow { display: flex; gap: 8px; padding: 7px 8px 9px; align-items: flex-end; }
+  .qk svg { width: 15px; height: 15px; }
+  .qk:hover, .qk:focus-visible { border-color: #48515c; color: var(--fg); outline: none; }
+  .qk:active { background: #252c34; transform: translateY(1px); }
+  #inputrow { display: flex; gap: 7px; padding: 5px 7px 8px; align-items: flex-end; }
   #msg {
-    flex: 1; min-height: 40px; max-height: 120px; resize: none;
+    flex: 1; min-height: 42px; max-height: 120px; resize: none;
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-    border-radius: 10px; padding: 10px 12px; font-size: 16px; font-family: inherit;
+    border-radius: 7px; padding: 10px 12px; font-size: 16px; font-family: inherit;
     outline: none;
   }
-  #msg:focus { border-color: var(--accent); }
+  #msg::placeholder { color: var(--fg-faint); }
+  #msg:focus { border-color: #3e8fc5; box-shadow: 0 0 0 2px rgba(85,184,255,.08); }
   #send {
-    flex: none; width: 44px; height: 44px; border-radius: 10px; border: none;
-    background: var(--accent); color: #fff; display: flex; align-items: center;
+    flex: none; width: 42px; height: 42px; border-radius: 7px; border: 1px solid #6ac1ff;
+    background: var(--accent-strong); color: #fff; display: flex; align-items: center;
     justify-content: center; cursor: pointer;
   }
+  #send:active { transform: translateY(1px); background: #087ce0; }
 
   /* ---- new session sheet ---- */
   #sheet, .sheet {
@@ -185,7 +202,7 @@
   }
   #sheet.show, .sheet.show { display: flex; align-items: flex-end; }
   #sheet .panel, .sheet .panel {
-    background: var(--bg2); border-radius: 16px 16px 0 0; width: 100%;
+    background: var(--bg2); border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; width: 100%;
     padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
     display: flex; flex-direction: column; gap: 12px;
   }
@@ -196,10 +213,11 @@
   }
   .agentrow {
     display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;
-    padding: 10px 11px; border-radius: 9px; cursor: pointer;
-    background: var(--bg3); border: 1px solid var(--border);
+    padding: 10px 11px; border-radius: 6px; cursor: pointer;
+    background: transparent; border: 1px solid transparent;
   }
-  .agentrow.active { border-color: var(--accent); background: #1c2a41; }
+  .agentrow:hover { background: var(--bg3); }
+  .agentrow.active { border-color: #34546b; background: #17212a; }
   .agentrow .txt { flex: 1; min-width: 0; }
   .agentrow .current { flex: none; color: var(--accent); font-size: 11px; }
   .fld { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--fg-dim); }
@@ -229,29 +247,44 @@
     background: var(--bg3); color: var(--fg); font-size: 14px; cursor: pointer;
   }
   #sheet button.primary, .sheet button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (max-width: 374px) {
+    #quickkeys { grid-template-columns: 34px 33px 33px 38px 32px repeat(4, minmax(25px, 1fr)) 33px; }
+    .qk { font-size: 9.5px; }
+    .tab-btn, #attn { width: 35px; }
+  }
+  @media (min-width: 600px) {
+    #quickkeys { grid-template-columns: 42px 40px 40px 46px 38px repeat(4, 38px) 40px; justify-content: start; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+  }
 </style>
 </head>
 <body>
   <div id="tabbar">
     <div id="conn" title="connection"></div>
-    <div id="attn" title="Next agent needing attention" style="display:none;">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-      <span>0</span>
-    </div>
     <div id="agentpick" role="button" tabindex="0" aria-label="Choose agent" aria-expanded="false"></div>
-    <div class="tab-btn" id="pvbtn" title="Preview a local port">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>
-    </div>
-    <div class="tab-btn" id="setbtn" title="Settings">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09c0 .66.39 1.26 1 1.51H21a2 2 0 1 1 0 4h-.09c-.61 0-1.21.25-1.51.9z"/></svg>
-    </div>
-    <div class="tab-btn" id="newbtn" title="New session">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    </div>
+    <button id="attn" type="button" title="Next agent needing attention" aria-label="Next agent needing attention" style="display:none;">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
+      <span>0</span>
+    </button>
+    <button class="tab-btn" type="button" id="pvbtn" title="Preview a local port" aria-label="Preview a local port">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg>
+    </button>
+    <button class="tab-btn" type="button" id="setbtn" title="Settings" aria-label="Settings">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>
+    </button>
+    <button class="tab-btn" type="button" id="newbtn" title="New session" aria-label="New session">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>
+    </button>
   </div>
 
   <div id="termwrap">
     <div id="term"></div>
+    <button id="livekey" type="button" title="Jump to live output">
+      <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      Live
+    </button>
 
     <div id="preview">
       <div class="vbar" id="pvbar"></div>
@@ -266,11 +299,11 @@
   </div>
 
   <div id="footer">
-    <div id="quickkeys"><div id="livekey" class="qk" tabindex="-1">↓ Live</div></div>
+    <div id="quickkeys" aria-label="Terminal keys"></div>
     <div id="inputrow">
       <textarea id="msg" rows="1" placeholder="Type to the agent…" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
-      <button id="send" title="Send">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      <button id="send" title="Send" aria-label="Send">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
       </button>
     </div>
   </div>
@@ -366,6 +399,18 @@ function colorOf(c) {
 const $ = (id) => document.getElementById(id);
 const term = $('term'), agentPickEl = $('agentpick'), agentListEl = $('agent-list');
 const histBadge = $('livekey'), emptyEl = $('empty');
+const LUCIDE = {
+  'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+  'arrow-right': '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  'arrow-up': '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  'arrow-down': '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+  'corner-down-left': '<path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/>',
+  'folder': '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  'chevrons-up-down': '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
+};
+function iconSvg(name, size = 15) {
+  return `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${LUCIDE[name]}</svg>`;
+}
 let ws = null, wsOk = false;
 let sessions = [];          // from server
 let activePane = localStorage.getItem('herdr-web-pane') || null;
@@ -793,7 +838,7 @@ function renderTabs() {
     txt.append(lbl, sub);
     const chev = document.createElement('span');
     chev.className = 'chev';
-    chev.textContent = `▾ ${entries.length}`;
+    chev.innerHTML = `${iconSvg('chevrons-up-down', 14)}<span>${entries.length}</span>`;
     agentPickEl.append(dot, txt, chev);
   } else {
     const txt = document.createElement('div');
@@ -801,7 +846,7 @@ function renderTabs() {
     txt.textContent = entries.length ? 'Choose agent' : 'No agents';
     const chev = document.createElement('span');
     chev.className = 'chev';
-    chev.textContent = `▾ ${entries.length}`;
+    chev.innerHTML = `${iconSvg('chevrons-up-down', 14)}<span>${entries.length}</span>`;
     agentPickEl.append(txt, chev);
   }
 
@@ -1042,38 +1087,47 @@ msg.addEventListener('input', () => {
   msg.style.height = Math.min(msg.scrollHeight, 120) + 'px';
 });
 
-const QUICK_KEYS = [
-  ['Esc', ['esc']], ['Tab', ['tab']], ['⇧Tab', ['shift+tab']], ['^C', ['ctrl+c']],
-  ['↑', ['up']], ['↓', ['down']], ['←', ['left']], ['→', ['right']],
-  ['⏎', ['enter']],
-];
 const qkEl = $('quickkeys');
-for (const [label, keys] of QUICK_KEYS) {
-  const b = document.createElement('div');
+function terminalKey({ label, icon, keys, title }) {
+  const b = document.createElement('button');
+  b.type = 'button';
   b.className = 'qk';
-  b.textContent = label;
-  b.tabIndex = -1;
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  if (icon) b.innerHTML = iconSvg(icon);
+  else b.textContent = label;
   b.addEventListener('mousedown', (e) => e.preventDefault());
   b.addEventListener('click', () => {
     if (!activePane) return;
     send({ type: 'key', pane: activePane, keys });
     jumpLive();
   });
-  qkEl.appendChild(b);
+  return b;
 }
-function keyChip(label, cls, onClick) {
-  const b = document.createElement('div');
-  b.className = cls;
-  b.textContent = label;
-  b.tabIndex = -1;
+function actionKey({ label, icon, title, onClick }) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'qk';
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  if (icon) b.innerHTML = `${iconSvg(icon)}<span>${label}</span>`;
+  else b.textContent = label;
   b.addEventListener('mousedown', (e) => e.preventDefault());
   b.addEventListener('click', onClick);
   return b;
 }
-// Keep directory selection at the front; typing paths is the biggest source
-// of avoidable friction on a phone.
-const cdChip = keyChip('\u{1F4C1} cd', 'qk', () => openDirPicker());
-qkEl.insertBefore(cdChip, qkEl.firstChild?.nextSibling || null);
+qkEl.appendChild(actionKey({ label: 'cd', icon: 'folder', title: 'Change directory', onClick: () => openDirPicker() }));
+for (const key of [
+  { label: 'Esc', keys: ['esc'], title: 'Escape' },
+  { label: 'Tab', keys: ['tab'], title: 'Tab' },
+  { label: '⇧Tab', keys: ['shift+tab'], title: 'Shift Tab' },
+  { label: '^C', keys: ['ctrl+c'], title: 'Control C' },
+  { icon: 'arrow-left', keys: ['left'], title: 'Left arrow' },
+  { icon: 'arrow-up', keys: ['up'], title: 'Up arrow' },
+  { icon: 'arrow-down', keys: ['down'], title: 'Down arrow' },
+  { icon: 'arrow-right', keys: ['right'], title: 'Right arrow' },
+  { icon: 'corner-down-left', keys: ['enter'], title: 'Enter' },
+]) qkEl.appendChild(terminalKey(key));
 
 // ---------------------------------------------------------------------------
 // Directory picker — tap a directory instead of typing a path
@@ -1263,6 +1317,7 @@ function setView(v) {
   const split = v !== 'term' && isSplit();
   $('preview').classList.toggle('show', v === 'preview');
   $('termwrap').classList.toggle('split', split);
+  $('termwrap').classList.toggle('previewing', v === 'preview' && !split);
   $('pvbtn').style.color = v === 'preview' ? 'var(--accent)' : '';
   $('footer').style.display = (v === 'term' || split) ? '' : 'none';
   if ((v === 'term' || split) && atBottom) pinBottom();
