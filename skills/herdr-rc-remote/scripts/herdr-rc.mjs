@@ -84,12 +84,51 @@ function isMirrorAgent(agent) {
 }
 
 async function readAgent(pane) {
-  const result = await run(HERDR_BIN, ['agent', 'get', pane], 10_000);
-  let envelope;
-  try { envelope = JSON.parse(result.stdout); } catch { throw new Error(`Herdr returned invalid agent JSON for ${pane}.`); }
-  const agent = envelope?.result?.agent;
-  if (!agent) throw new Error(`Herdr did not return an agent for ${pane}.`);
-  return { envelope, agent };
+  try {
+    const result = await run(HERDR_BIN, ['agent', 'get', pane], 10_000);
+    let envelope;
+    try { envelope = JSON.parse(result.stdout); } catch { throw new Error(`Herdr returned invalid agent JSON for ${pane}.`); }
+    const agent = envelope?.result?.agent;
+    if (!agent) throw new Error(`Herdr did not return an agent for ${pane}.`);
+    return { envelope, agent };
+  } catch (agentError) {
+    // Ordinary shell panes have no agent record, but a mirror still exposes
+    // them as controllable panes. Preserve the terminal identity for waits.
+    let result;
+    try {
+      result = await run(HERDR_BIN, ['pane', 'get', pane], 10_000);
+    } catch {
+      throw agentError;
+    }
+    let envelope;
+    try { envelope = JSON.parse(result.stdout); } catch { throw agentError; }
+    const info = envelope?.result?.pane;
+    if (!info) throw agentError;
+    return {
+      envelope: { id: 'herdr-rc:pane:get', result: { agent: {
+        pane_id: info.pane_id,
+        terminal_id: info.terminal_id,
+        workspace_id: info.workspace_id,
+        tab_id: info.tab_id,
+        cwd: info.cwd,
+        foreground_cwd: info.foreground_cwd,
+        agent_status: info.agent_status || 'unknown',
+        display_agent: 'terminal',
+        title: info.terminal_title_stripped || null,
+      } }, type: 'agent_info' },
+      agent: {
+        pane_id: info.pane_id,
+        terminal_id: info.terminal_id,
+        workspace_id: info.workspace_id,
+        tab_id: info.tab_id,
+        cwd: info.cwd,
+        foreground_cwd: info.foreground_cwd,
+        agent_status: info.agent_status || 'unknown',
+        display_agent: 'terminal',
+        title: info.terminal_title_stripped || null,
+      },
+    };
+  }
 }
 
 export async function pollMirrorAgent({

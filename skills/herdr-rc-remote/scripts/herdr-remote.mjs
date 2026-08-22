@@ -47,12 +47,45 @@ function isMirrorAgent(agent) {
 }
 
 async function readAgent(pane) {
-  const result = await run(HERDR_BIN, ['agent', 'get', pane], 10_000);
-  let envelope;
-  try { envelope = JSON.parse(result.stdout); } catch { throw new Error(`Herdr returned invalid agent JSON for ${pane}.`); }
-  const agent = envelope?.result?.agent;
-  if (!agent) throw new Error(`Herdr did not return an agent for ${pane}.`);
-  return { envelope, agent };
+  try {
+    const result = await run(HERDR_BIN, ['agent', 'get', pane], 10_000);
+    let envelope;
+    try { envelope = JSON.parse(result.stdout); } catch { throw new Error(`Herdr returned invalid agent JSON for ${pane}.`); }
+    const agent = envelope?.result?.agent;
+    if (!agent) throw new Error(`Herdr did not return an agent for ${pane}.`);
+    return { envelope, agent, source: 'agent' };
+  } catch (agentError) {
+    // A mirror can display an ordinary shell or another unrecognized process.
+    // It is still a real pane. Use pane.get as the authority for its identity
+    // and synthesize the minimum agent-shaped record needed by the wait/guard
+    // code; reads and key sends are routed to the pane surface below.
+    let result;
+    try {
+      result = await run(HERDR_BIN, ['pane', 'get', pane], 10_000);
+    } catch {
+      throw agentError;
+    }
+    let envelope;
+    try { envelope = JSON.parse(result.stdout); } catch { throw agentError; }
+    const info = envelope?.result?.pane;
+    if (!info) throw agentError;
+    const agent = {
+      pane_id: info.pane_id,
+      terminal_id: info.terminal_id,
+      workspace_id: info.workspace_id,
+      tab_id: info.tab_id,
+      cwd: info.cwd,
+      foreground_cwd: info.foreground_cwd,
+      agent_status: info.agent_status || 'unknown',
+      display_agent: 'terminal',
+      title: info.terminal_title_stripped || null,
+    };
+    return {
+      envelope: { id: 'herdr-remote:pane:get', result: { agent, pane: info }, type: 'agent_info' },
+      agent,
+      source: 'pane',
+    };
+  }
 }
 
 async function requireMirror(pane) {
@@ -65,9 +98,29 @@ async function requireMirror(pane) {
 
 async function writeCommand(group, subcommand, args) {
   const pane = validatePane(args[0]);
-  await requireMirror(pane);
-  const result = await run(HERDR_BIN, [group, subcommand, pane, ...args.slice(1)]);
+  const current = await requireMirror(pane);
+  if (group === 'agent' && subcommand === 'get' && current.source === 'pane') {
+    process.stdout.write(`${JSON.stringify(current.envelope)}\n`);
+    return;
+  }
+  const actualGroup = group === 'agent' && current.source === 'pane' ? 'pane' : group;
+  const result = await run(HERDR_BIN, [actualGroup, subcommand, pane, ...args.slice(1)]);
   if (result.stdout) process.stdout.write(result.stdout);
+}
+
+async function readMirrorPanes() {
+  const workspacesResult = await run(HERDR_BIN, ['workspace', 'list']);
+  let workspaces;
+  try { workspaces = JSON.parse(workspacesResult.stdout)?.result?.workspaces || []; } catch { return []; }
+  const panes = [];
+  for (const workspace of workspaces) {
+    try {
+      const result = await run(HERDR_BIN, ['pane', 'list', '--workspace', workspace.workspace_id]);
+      const listed = JSON.parse(result.stdout)?.result?.panes || [];
+      panes.push(...listed.filter(isMirrorAgent));
+    } catch { /* a workspace can disappear while the mirror refreshes */ }
+  }
+  return panes;
 }
 
 async function listAgents() {
@@ -75,6 +128,25 @@ async function listAgents() {
   let envelope;
   try { envelope = JSON.parse(result.stdout); } catch { throw new Error('Herdr returned invalid agent list JSON.'); }
   const agents = (envelope?.result?.agents || []).filter(isMirrorAgent);
+  const seen = new Set(agents.map((agent) => agent.pane_id));
+  // Keep ordinary mirror panes visible too. Herdr's agent list intentionally
+  // omits panes without recognized agent metadata, but RC controls panes, not
+  // only agents, so a terminal pane must not disappear from the remote list.
+  for (const pane of await readMirrorPanes()) {
+    if (seen.has(pane.pane_id)) continue;
+    seen.add(pane.pane_id);
+    agents.push({
+      pane_id: pane.pane_id,
+      terminal_id: pane.terminal_id,
+      workspace_id: pane.workspace_id,
+      tab_id: pane.tab_id,
+      cwd: pane.cwd,
+      foreground_cwd: pane.foreground_cwd,
+      agent_status: pane.agent_status || 'unknown',
+      display_agent: 'terminal',
+      title: pane.terminal_title_stripped || null,
+    });
+  }
   console.log(JSON.stringify({ ...envelope, result: { ...envelope.result, agents } }));
 }
 
