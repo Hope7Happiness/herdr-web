@@ -30,6 +30,11 @@ const PORT = Number(process.env.HERDR_WEB_PORT || 7930);
 // a reverse proxy, or set HERDR_WEB_BIND=0.0.0.0 if you know what you're doing.
 const BIND = process.env.HERDR_WEB_BIND || '127.0.0.1';
 const POLL_MS = 300;
+// Lifecycle subscriptions are the fast path, but a Herdr live handoff can
+// leave the old event socket half-open without delivering a close callback.
+// While a phone is connected, periodically reconcile from the authoritative
+// snapshot so a missed working -> idle edge cannot leave a stale green dot.
+const STATUS_REFRESH_MS = 2000;
 // Mirror panes can emit many scroll events while a full-screen TUI redraws.
 // Keep the event fast path responsive, but never turn those events into an
 // unbounded request/render loop.
@@ -49,6 +54,7 @@ const state = {
   eventSub: null,          // herdr subscription handle
   paneIds: [],             // pane ids covered by current subscription
   refreshTimer: null,
+  statusTimer: null,
 };
 
 function broadcast(msg) {
@@ -367,6 +373,9 @@ wss.on('connection', (ws) => {
   let watched = null;
   jlog('info', 'ws-open', { clients: state.webClients.size });
   ws.send(JSON.stringify(sessionsMessage()));
+  // Never trust a cached snapshot at connection time. This also repairs the
+  // event subscription if pane ids changed while no browser was connected.
+  refreshSnapshot('ws-open');
 
   ws.on('message', async (raw) => {
     let msg;
@@ -441,6 +450,10 @@ wss.on('connection', (ws) => {
   const pong = await herdr.ensureServer();
   jlog('info', 'herdr-ready', { version: pong.version, protocol: pong.protocol });
   await refreshSnapshot('startup');
+  state.statusTimer = setInterval(() => {
+    if (state.webClients.size) refreshSnapshot('status-reconcile');
+  }, STATUS_REFRESH_MS);
+  state.statusTimer.unref?.();
   server.listen(PORT, BIND, () => jlog('info', 'listening', {
     port: PORT, bind: BIND, sharedRuntimeResize: SHARED_RUNTIME_RESIZE,
   }));
@@ -453,6 +466,7 @@ function shutdown(signal) {
   jlog('info', 'shutdown', { signal });
   state.eventSub?.close();
   if (state.refreshTimer) clearTimeout(state.refreshTimer);
+  if (state.statusTimer) clearInterval(state.statusTimer);
   for (const paneId of watchers.keys()) stopWatcher(paneId);
   sizeDriver?.stop();
   for (const ws of state.webClients) ws.close(1001, 'server shutting down');
