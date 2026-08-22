@@ -11,6 +11,8 @@ marker="$skill_target/.managed-by-herdr-rc"
 herdr_skill_target="$skill_parent/herdr"
 herdr_marker="$herdr_skill_target/.managed-by-herdr-rc"
 herdr_cmd="${HERDR_BIN_PATH:-herdr}"
+herdr_remote_bin_dir="${HERDR_REMOTE_BIN_DIR:-$HOME/.local/bin}"
+herdr_remote_link="$herdr_remote_bin_dir/herdr-remote"
 
 mkdir -p "$skill_parent"
 if [ -L "$skill_target" ]; then
@@ -26,7 +28,24 @@ mkdir -p "$skill_target"
 cp -R "$skill_source/." "$skill_target/"
 touch "$marker"
 chmod 755 "$skill_target/scripts/herdr-rc.mjs"
+chmod 755 "$skill_target/scripts/herdr-remote.mjs"
+chmod 755 "$skill_target/scripts/herdr-remote"
 echo "Installed Codex skill: $skill_target"
+
+mkdir -p "$herdr_remote_bin_dir"
+if [ -L "$herdr_remote_link" ]; then
+  existing_link="$(readlink "$herdr_remote_link")"
+  if [ "$existing_link" != "$skill_target/scripts/herdr-remote" ]; then
+    echo "Refusing to replace existing herdr-remote symlink: $herdr_remote_link -> $existing_link" >&2
+    exit 1
+  fi
+elif [ -e "$herdr_remote_link" ]; then
+  echo "Refusing to replace existing herdr-remote command: $herdr_remote_link" >&2
+  exit 1
+else
+  ln -s "$skill_target/scripts/herdr-remote" "$herdr_remote_link"
+fi
+echo "Linked herdr-remote: $herdr_remote_link"
 
 # `herdr --skill` is the version-matched source of truth for native pane,
 # workspace, and agent operations. It prints the skill but does not install it.

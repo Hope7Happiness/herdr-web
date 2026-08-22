@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 const PLUGIN_ID = 'hope7happiness.herdr-web';
 const BASE_URL = process.env.HERDR_RC_BASE_URL || 'http://127.0.0.1:7930';
 const HERDR_BIN = process.env.HERDR_RC_HERDR_BIN || 'herdr';
 const SSH_BIN = process.env.HERDR_RC_SSH_BIN || 'ssh';
+const AGENT_STATUSES = new Set(['idle', 'working', 'blocked', 'done', 'unknown']);
+const DEFAULT_WAIT_TIMEOUT_MS = 120_000;
+const WAIT_POLL_MS = 250;
 
 function usage() {
-  console.error('usage: herdr-rc.mjs {enable|status|connect <ssh-target>|list|disconnect <ssh-target>}');
+  console.error('usage: herdr-rc.mjs {enable|status|connect <ssh-target>|list|disconnect <ssh-target>|wait <mirror-pane> [--until STATUS]... [--timeout MS]}');
   process.exitCode = 2;
 }
 
@@ -28,6 +32,41 @@ function validateTarget(raw) {
   return target;
 }
 
+function validatePane(raw) {
+  const pane = String(raw || '').trim();
+  if (!pane || pane.length > 255 || /[\x00-\x20\x7f]/.test(pane) || pane.startsWith('-')) {
+    throw new Error('An exact mirror pane id is required, such as wC:p2.');
+  }
+  return pane;
+}
+
+export function parseWaitArgs(args) {
+  const pane = validatePane(args[0]);
+  const until = [];
+  let timeoutMs = DEFAULT_WAIT_TIMEOUT_MS;
+  for (let index = 1; index < args.length;) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (flag === '--until') {
+      if (!AGENT_STATUSES.has(value)) {
+        throw new Error(`Invalid agent status: ${value || '(missing)'}.`);
+      }
+      until.push(value);
+      index += 2;
+    } else if (flag === '--timeout') {
+      if (!/^(0|[1-9][0-9]*)$/.test(value || '')) {
+        throw new Error('--timeout requires a non-negative integer in milliseconds.');
+      }
+      timeoutMs = Number(value);
+      if (!Number.isSafeInteger(timeoutMs)) throw new Error('--timeout is too large.');
+      index += 2;
+    } else {
+      throw new Error(`Unknown wait option: ${flag}.`);
+    }
+  }
+  return { pane, until: new Set(until.length ? until : ['idle', 'done', 'blocked']), timeoutMs };
+}
+
 async function run(file, args, timeout = 20_000) {
   try {
     return await execFileAsync(file, args, { timeout, maxBuffer: 4 * 1024 * 1024 });
@@ -38,6 +77,58 @@ async function run(file, args, timeout = 20_000) {
 }
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isMirrorAgent(agent) {
+  return [agent?.foreground_cwd, agent?.cwd]
+    .some((cwd) => /(?:^|[\\/])\.mirror-pane[\\/]?$/.test(String(cwd || '')));
+}
+
+async function readAgent(pane) {
+  const result = await run(HERDR_BIN, ['agent', 'get', pane], 10_000);
+  let envelope;
+  try { envelope = JSON.parse(result.stdout); } catch { throw new Error(`Herdr returned invalid agent JSON for ${pane}.`); }
+  const agent = envelope?.result?.agent;
+  if (!agent) throw new Error(`Herdr did not return an agent for ${pane}.`);
+  return { envelope, agent };
+}
+
+export async function pollMirrorAgent({
+  pane,
+  until,
+  timeoutMs,
+  getAgent = () => readAgent(pane),
+  sleep = delay,
+  now = Date.now,
+  pollMs = WAIT_POLL_MS,
+}) {
+  const deadline = now() + timeoutMs;
+  let terminalId;
+  while (true) {
+    const current = await getAgent();
+    const agent = current?.agent || current?.envelope?.result?.agent || current;
+    if (!terminalId) {
+      if (!isMirrorAgent(agent)) {
+        throw new Error(`${pane} is not a mirror pane; use native "herdr agent wait" for local agents.`);
+      }
+      terminalId = agent.terminal_id;
+    } else if (agent.terminal_id !== terminalId) {
+      throw new Error(`The pane occupant changed while waiting for ${pane}.`);
+    }
+    if (until.has(agent.agent_status)) return current;
+
+    const remaining = deadline - now();
+    if (remaining <= 0) {
+      throw new Error(`Timed out waiting for ${pane}; current status is ${agent.agent_status || 'unknown'}.`);
+    }
+    await sleep(Math.min(pollMs, remaining));
+  }
+}
+
+async function waitAgent(args) {
+  const options = parseWaitArgs(args);
+  const matched = await pollMirrorAgent(options);
+  console.log(JSON.stringify(matched.envelope || { id: 'herdr-rc:wait', result: { agent: matched.agent || matched } }));
+}
 
 async function pluginAction(action, timeout = 45_000) {
   const invoked = await run(HERDR_BIN, ['plugin', 'action', 'invoke', action, '--plugin', PLUGIN_ID]);
@@ -180,17 +271,22 @@ async function disconnect(target) {
 
 async function main() {
   assertManagedPane();
-  const [command, rawTarget, ...extra] = process.argv.slice(2);
-  if (!command || extra.length) return usage();
-  if (command === 'enable') return enable();
-  if (command === 'status') return status();
-  if (command === 'list') return list();
+  const [command, ...args] = process.argv.slice(2);
+  if (!command) return usage();
+  if (command === 'wait') return waitAgent(args);
+  if (args.length > 1) return usage();
+  const rawTarget = args[0];
+  if (command === 'enable' && !rawTarget) return enable();
+  if (command === 'status' && !rawTarget) return status();
+  if (command === 'list' && !rawTarget) return list();
   if (command === 'connect') return connect(validateTarget(rawTarget));
   if (command === 'disconnect') return disconnect(validateTarget(rawTarget));
   usage();
 }
 
-main().catch((error) => {
-  console.error(`herdr-rc: ${error.message}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(`herdr-rc: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

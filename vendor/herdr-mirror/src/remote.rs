@@ -1,6 +1,6 @@
-// ssh transport for the DAEMON's own traffic (remote CLI execs + API-socket
-// forward) over one ControlMaster per host. Pane streams deliberately use
-// their own direct connections instead (see pane.rs).
+// ssh transport for the DAEMON's own traffic (remote CLI execs + API/client
+// socket forwards) over one ControlMaster per host. Pane streams use the
+// forwarded client socket instead of opening one SSH session per pane.
 
 use std::fs;
 use std::os::unix::fs::FileTypeExt;
@@ -94,6 +94,7 @@ pub struct RemoteHost {
     pub cfg: HostConfig,
     ctl_path: PathBuf,
     pub fwd_sock: PathBuf,
+    client_sock: PathBuf,
     forwarded: bool,
     /// docker hosts only: resolved container + chosen stdio bridge
     container: Option<crate::docker::Container>,
@@ -204,6 +205,7 @@ impl RemoteHost {
         RemoteHost {
             ctl_path: state_dir.join(format!("{stem}.ctl")),
             fwd_sock: state_dir.join(format!("{stem}-api.sock")),
+            client_sock: state_dir.join(format!("{stem}-client.sock")),
             transport_hint: cfg.api_transport,
             cfg: cfg.clone(),
             forwarded: false,
@@ -396,6 +398,55 @@ impl RemoteHost {
         Ok(self.fwd_sock.clone())
     }
 
+    /// Forward the remote Herdr client socket once per host. The terminal
+    /// session protocol is a separate bincode socket from the JSON API, but
+    /// OpenSSH can carry both forwards over the same ControlMaster.
+    async fn forward_client_socket(&mut self) -> Result<()> {
+        if self.cfg.kind.is_docker() {
+            return Ok(());
+        }
+        // A socket path can survive after the ControlMaster or its forward
+        // died.  Only reuse it when a listener actually accepts a connection;
+        // otherwise remove the stale Unix socket and register the forward
+        // again.  This keeps reconnects from silently handing every pane a
+        // dead local client endpoint.
+        if self.client_sock.exists() {
+            if tokio::net::UnixStream::connect(&self.client_sock).await.is_ok() {
+                return Ok(());
+            }
+            remove_stale_control_socket(&self.client_sock)?;
+        }
+        let home = self.exec("printf '%s' ~", 5000).await?.trim().to_string();
+        if home.is_empty() {
+            return Err(err("remote home directory is empty; cannot forward herdr client socket"));
+        }
+        let remote_sock = format!("{home}/.config/herdr/herdr-client.sock");
+        if let Some(parent) = self.client_sock.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut args = self.base_args();
+        args.extend([
+            "-O".into(),
+            "forward".into(),
+            "-L".into(),
+            format!("{}:{}", self.client_sock.display(), remote_sock),
+            self.cfg.target.clone(),
+        ]);
+        let res = ssh(&args, 15000).await;
+        if res.code != 0 {
+            return Err(err(format!(
+                "ssh client socket forward failed: {}",
+                nonempty(&res.err, res.code)
+            )));
+        }
+        Ok(())
+    }
+
+    /// Local path panes should use for the remote terminal client protocol.
+    pub fn client_socket_path(&self) -> Option<PathBuf> {
+        client_socket_path_for(&self.cfg, self.client_sock.clone())
+    }
+
     /// Try the streamlocal `-L` forward, verified with a real ping — not just
     /// that `ssh -O forward` reported success.
     ///
@@ -520,7 +571,16 @@ impl RemoteHost {
         // transport probe); the docker branch resolves a path and connects below
         let container = self.container.clone();
         let sock = match &container {
-            None => return Ok((self.connect_ssh_api(&status.socket).await?, status)),
+            None => {
+                let api = self.connect_ssh_api(&status.socket).await?;
+                if let Err(e) = self.forward_client_socket().await {
+                    self.log.log(&format!(
+                        "[{}] client socket forward unavailable ({e}) — panes use direct SSH fallback",
+                        self.cfg.name
+                    ));
+                }
+                return Ok((api, status));
+            }
             Some(c) => {
                 // NEVER steal a healthy relay — the socket path is per-HOST but
                 // shared across processes (daemon, `remote-*` actions, `once`),
@@ -549,6 +609,27 @@ impl RemoteHost {
         Ok((api, status))
     }
 
+}
+
+/// Return a host's forwarded client socket when it is a live-looking Unix
+/// socket.  Healing runs outside the connected `RemoteHost` borrow, so it
+/// derives the same path without opening another SSH transport.
+pub(crate) fn client_socket_path_for(cfg: &HostConfig, path: PathBuf) -> Option<PathBuf> {
+    if cfg.kind.is_docker() {
+        return None;
+    }
+    fs::symlink_metadata(&path)
+        .ok()
+        .filter(|m| m.file_type().is_socket())
+        .map(|_| path)
+}
+
+pub(crate) fn forwarded_client_socket_path(
+    cfg: &HostConfig,
+    state_dir: &Path,
+) -> Option<PathBuf> {
+    let stem = socket_stem(state_dir, &cfg.name);
+    client_socket_path_for(cfg, state_dir.join(format!("{stem}-client.sock")))
 }
 
 fn nonempty(e: &str, code: i32) -> String {

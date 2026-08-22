@@ -171,7 +171,7 @@
   /* ---- footer ---- */
   #footer { flex: none; background: var(--bg2); border-top: 1px solid var(--border); }
   #quickkeys {
-    display: grid; grid-template-columns: 38px 36px 36px 42px 34px repeat(4, minmax(28px, 1fr)) 36px;
+    display: grid; grid-template-columns: 38px 36px 42px 34px repeat(4, minmax(28px, 1fr)) 36px;
     gap: 3px; padding: 6px 6px 3px; overflow: hidden;
   }
   .qk {
@@ -183,6 +183,8 @@
   .qk svg { width: 15px; height: 15px; }
   .qk:hover, .qk:focus-visible { border-color: #48515c; color: var(--fg); outline: none; }
   .qk:active { background: #252c34; transform: translateY(1px); }
+  .qk.pending { color: var(--accent); border-color: #3b759c; }
+  .qk:disabled { opacity: .65; cursor: wait; }
   #inputrow { display: flex; gap: 7px; padding: 5px 7px 8px; align-items: flex-end; }
   #msg {
     flex: 1; min-height: 42px; max-height: 120px; resize: none;
@@ -251,12 +253,12 @@
   }
   #sheet button.primary, .sheet button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   @media (max-width: 374px) {
-    #quickkeys { grid-template-columns: 34px 33px 33px 38px 32px repeat(4, minmax(25px, 1fr)) 33px; }
+    #quickkeys { grid-template-columns: 34px 33px 38px 32px repeat(4, minmax(25px, 1fr)) 33px; }
     .qk { font-size: 9.5px; }
     .tab-btn, #attn { width: 35px; }
   }
   @media (min-width: 600px) {
-    #quickkeys { grid-template-columns: 42px 40px 40px 46px 38px repeat(4, 38px) 40px; justify-content: start; }
+    #quickkeys { grid-template-columns: 42px 40px 46px 38px repeat(4, 38px) 40px; justify-content: start; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
@@ -408,6 +410,7 @@ const LUCIDE = {
   'arrow-up': '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
   'arrow-down': '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
   'corner-down-left': '<path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/>',
+  'rotate-ccw': '<path d="M3 12a9 9 0 1 0 3-6.7L3 8.5"/><path d="M3 3v5.5h5.5"/>',
   'folder': '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   'chevrons-up-down': '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
 };
@@ -418,6 +421,8 @@ let ws = null, wsOk = false;
 let sessions = [];          // from server
 let activePane = localStorage.getItem('herdr-web-pane') || null;
 let liveRows = [];          // last live screen rows
+let queuedLiveRows = null;
+let liveRenderFrame = 0;
 let lastRecent = null;      // last scrollback fetch — rendered ABOVE the live block
 let atBottom = true;        // view pinned to the live tail
 let sharedRuntimeResize = false;
@@ -567,6 +572,22 @@ function renderInto(el, rows) {
   el.replaceChildren(frag);
 }
 
+// Several sources can report the same pane in one browser turn (the mirror's
+// event fast path and the regular poll). Paint only the newest screen once per
+// animation frame so an intermediate terminal redraw never flashes on screen.
+function renderLiveSoon(rows) {
+  queuedLiveRows = rows;
+  if (liveRenderFrame) return;
+  liveRenderFrame = requestAnimationFrame(() => {
+    liveRenderFrame = 0;
+    const next = queuedLiveRows;
+    queuedLiveRows = null;
+    if (!next) return;
+    renderInto(liveEl, next);
+    if (atBottom) pinBottomSoon();
+  });
+}
+
 let glyphsCalibrated = false;
 function fitFont() {
   if (glyphsCalibrated) return;
@@ -682,7 +703,7 @@ function fetchHistSoon(delay = 1500) {
 
 function onScreen(rows) {
   liveRows = rows;
-  renderInto(liveEl, rows);
+  renderLiveSoon(rows);
   fitFont();
   if (atBottom) pinBottom();
   pinBottomSoon();
@@ -834,10 +855,10 @@ function renderTabs() {
     txt.className = 'txt';
     const lbl = document.createElement('div');
     lbl.className = 'lbl';
-    lbl.textContent = paneLabel(current.p, current.w);
+    lbl.textContent = workspaceLabel(current.w);
     const sub = document.createElement('div');
     sub.className = 'sub';
-    sub.textContent = paneSubtitle(current.p, st);
+    sub.textContent = paneLabel(current.p);
     txt.append(lbl, sub);
     const chev = document.createElement('span');
     chev.className = 'chev';
@@ -865,19 +886,12 @@ function renderTabs() {
     txt.className = 'txt';
     const lbl = document.createElement('div');
     lbl.className = 'lbl';
-    lbl.textContent = paneLabel(p, w);
-    txt.appendChild(lbl);
+    lbl.textContent = workspaceLabel(w);
     const sub = document.createElement('div');
     sub.className = 'sub';
-    sub.textContent = paneSubtitle(p, st);
-    if (sub.textContent) txt.appendChild(sub);
+    sub.textContent = paneLabel(p);
+    txt.append(lbl, sub);
     row.append(dot, txt);
-    if (p.pane_id === activePane) {
-      const badge = document.createElement('span');
-      badge.className = 'current';
-      badge.textContent = 'current';
-      row.appendChild(badge);
-    }
     row.addEventListener('click', () => choosePane(p.pane_id));
     frag.appendChild(row);
   }
@@ -886,11 +900,12 @@ function renderTabs() {
   emptyEl.style.display = activePane ? 'none' : 'flex';
 }
 
-function paneLabel(p, w) {
-  return (p.name || p.agent) ? `${p.name || p.agent} · ${w.label}` : w.label;
+function workspaceLabel(w) {
+  return String(w.label || w.workspace_id || 'workspace').trim();
 }
-function paneSubtitle(p, st) {
-  return st === 'blocked' ? 'needs input' : st === 'done' ? 'done — unseen' : (p.title || st);
+function paneLabel(p) {
+  const fallback = String(p.agent || '').toLowerCase() === 'codex' ? 'codex' : 'terminal';
+  return String(p.name || p.title || fallback || p.pane_id).trim();
 }
 
 function openAgentPicker() {
@@ -1060,6 +1075,22 @@ function connect() {
       case 'pane_gone':
         if (m.pane === activePane) selectPane(null);
         break;
+      case 'restart_result':
+        if (m.pane === activePane) {
+          restartPending = false;
+          restartButton.disabled = false;
+          restartButton.classList.remove('pending');
+          showToast(`Codex resumed ${m.sessionId}`, m.pane, false);
+        }
+        break;
+      case 'error':
+        if (m.for === 'restart') {
+          restartPending = false;
+          restartButton.disabled = false;
+          restartButton.classList.remove('pending');
+          showToast(m.error || 'Codex restart failed', activePane, true);
+        }
+        break;
     }
   };
 }
@@ -1113,17 +1144,27 @@ function actionKey({ label, icon, title, onClick }) {
   b.className = 'qk';
   b.title = title;
   b.setAttribute('aria-label', title);
-  if (icon) b.innerHTML = `${iconSvg(icon)}<span>${label}</span>`;
+  if (icon) b.innerHTML = `${iconSvg(icon)}${label ? `<span>${label}</span>` : ''}`;
   else b.textContent = label;
   b.addEventListener('mousedown', (e) => e.preventDefault());
   b.addEventListener('click', onClick);
   return b;
 }
 qkEl.appendChild(actionKey({ label: 'cd', icon: 'folder', title: 'Change directory', onClick: () => openDirPicker() }));
+let restartPending = false;
+let restartButton = null;
+restartButton = actionKey({ label: '', icon: 'rotate-ccw', title: 'Restart Codex session', onClick: () => {
+  if (!activePane || restartPending) return;
+  restartPending = true;
+  restartButton.disabled = true;
+  restartButton.classList.add('pending');
+  showToast('Stopping Codex and looking for its session id…', activePane, false);
+  send({ type: 'restart', pane: activePane });
+}});
+restartButton.id = 'restart';
+qkEl.appendChild(restartButton);
 for (const key of [
   { label: 'Esc', keys: ['esc'], title: 'Escape' },
-  { label: 'Tab', keys: ['tab'], title: 'Tab' },
-  { label: '⇧Tab', keys: ['shift+tab'], title: 'Shift Tab' },
   { label: '^C', keys: ['ctrl+c'], title: 'Control C' },
   { icon: 'arrow-left', keys: ['left'], title: 'Left arrow' },
   { icon: 'arrow-up', keys: ['up'], title: 'Up arrow' },

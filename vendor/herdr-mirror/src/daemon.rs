@@ -198,6 +198,7 @@ async fn run_connected(
     // for the life of the daemon
     remote_host.hint_transport(*remembered_transport);
     let (remote, _status) = remote_host.connect_api().await?;
+    let client_socket = remote_host.client_socket_path();
     *remembered_transport = remember_transport(remote_host.last_api_transport, exec_streak);
     *backoff_idx = 0;
     let deps = ConvergeDeps {
@@ -205,6 +206,7 @@ async fn run_connected(
         remote: remote.clone(),
         host: ctx.host.clone(),
         state_dir: ctx.env_state_dir.clone(),
+        client_socket,
         log: ctx.log.clone(),
         close_remote_on_local_close: ctx.close_remote_on_local_close,
         closes: ctx.closes.clone(),
@@ -430,7 +432,8 @@ async fn heal_zombie_mirrors(
         //
         // Sizes live in the remote layout, which we don't have here; the wrapper
         // falls back to its default and the next converge reconciles.
-        let cmd_for = crate::mirror::cmd_for_pane(h, state_dir, &HashMap::new());
+        let client_socket = crate::remote::forwarded_client_socket_path(h, state_dir);
+        let cmd_for = crate::mirror::cmd_for_pane(h, state_dir, &HashMap::new(), client_socket.as_deref());
         for (remote_pane_id, local_pane_id) in dead {
             let argv = cmd_for(&remote_pane_id);
             crate::mirror::spawn_streamer_pane(local, state_dir, &local_pane_id, &argv, log).await;
@@ -740,11 +743,13 @@ pub async fn cmd_once(env: Env) -> Result<()> {
     for h in &config.hosts {
         let mut remote_host = crate::remote::RemoteHost::new(h, &env.state_dir);
         let (remote, _status) = remote_host.connect_api().await?;
+        let client_socket = remote_host.client_socket_path();
         converge(&ConvergeDeps {
             local: local.clone(),
             remote,
             host: h.clone(),
             state_dir: env.state_dir.clone(),
+            client_socket,
             log: log.clone(),
             close_remote_on_local_close: config.close_remote_on_local_close,
             // one-shot: no local event stream, so there is no authoritative

@@ -12,6 +12,7 @@ const preview = require('./lib/preview');
 const settings = require('./lib/settings');
 const remotes = require('./lib/remotes');
 const input = require('./lib/input');
+const { restartCodex } = require('./lib/restart');
 const dirs = require('./lib/dirs');
 const security = require('./lib/security');
 
@@ -29,6 +30,10 @@ const PORT = Number(process.env.HERDR_WEB_PORT || 7930);
 // a reverse proxy, or set HERDR_WEB_BIND=0.0.0.0 if you know what you're doing.
 const BIND = process.env.HERDR_WEB_BIND || '127.0.0.1';
 const POLL_MS = 300;
+// Mirror panes can emit many scroll events while a full-screen TUI redraws.
+// Keep the event fast path responsive, but never turn those events into an
+// unbounded request/render loop.
+const EVENT_POLL_MIN_MS = 120;
 
 function jlog(level, event, extra = {}) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level, module: 'server', event, ...extra }));
@@ -101,8 +106,12 @@ function sessionList() {
           focused: p.focused,
           agent_status: p.agent_status,
           agent: agent?.agent || null,
-          name: agent?.name || null,
-          title: agent?.terminal_title_stripped || p.terminal_title_stripped || null,
+          // Herdr stores the user-facing pane name on the pane itself. Agent
+          // metadata is a useful fallback, but must not replace an explicit
+          // pane label (the phone picker mirrors desktop's workspace/pane
+          // naming rather than showing the provider type).
+          name: p.label || agent?.name || null,
+          title: agent?.title || agent?.terminal_title_stripped || p.terminal_title_stripped || null,
           cwd: p.foreground_cwd || p.cwd,
         };
       }),
@@ -152,12 +161,22 @@ const watchers = new Map(); // pane_id -> {clients:Set<ws>, timer, lastText, inF
 
 function pokeWatcher(paneId) {
   const w = watchers.get(paneId);
-  if (w) pollPane(paneId, w);
+  if (!w || w.inFlight || w.pokeTimer) return;
+  const wait = Math.max(0, EVENT_POLL_MIN_MS - (Date.now() - w.lastPollAt));
+  w.pokeTimer = setTimeout(() => {
+    w.pokeTimer = null;
+    pollPane(paneId, w);
+  }, wait);
 }
 
 async function pollPane(paneId, w) {
-  if (w.inFlight) { w.pending = true; return; }
+  if (w.inFlight) return;
+  if (w.pokeTimer) {
+    clearTimeout(w.pokeTimer);
+    w.pokeTimer = null;
+  }
   w.inFlight = true;
+  w.lastPollAt = Date.now();
   try {
     const res = await herdr.request('pane.read', {
       pane_id: paneId, source: 'visible', format: 'ansi',
@@ -179,14 +198,13 @@ async function pollPane(paneId, w) {
     }
   } finally {
     w.inFlight = false;
-    if (w.pending) { w.pending = false; pollPane(paneId, w); }
   }
 }
 
 function watchPane(paneId, ws) {
   let w = watchers.get(paneId);
   if (!w) {
-    w = { clients: new Set(), timer: null, lastText: null, inFlight: false, pending: false };
+    w = { clients: new Set(), timer: null, pokeTimer: null, lastText: null, lastPollAt: 0, inFlight: false };
     watchers.set(paneId, w);
     w.timer = setInterval(() => pollPane(paneId, w), POLL_MS);
   }
@@ -206,6 +224,7 @@ function stopWatcher(paneId) {
   const w = watchers.get(paneId);
   if (!w) return;
   clearInterval(w.timer);
+  if (w.pokeTimer) clearTimeout(w.pokeTimer);
   watchers.delete(paneId);
 }
 
@@ -379,6 +398,12 @@ wss.on('connection', (ws) => {
           } else {
             await herdr.request('pane.send_keys', { pane_id: msg.pane, keys: ['enter'] });
           }
+          break;
+        }
+        case 'restart': {
+          const result = await restartCodex(herdr, state.snapshot, msg.pane);
+          ws.send(JSON.stringify({ type: 'restart_result', pane: msg.pane, ...result }));
+          scheduleRefresh('codex-restarted');
           break;
         }
         case 'resize': { // desired pane size from the client's viewport fit

@@ -333,6 +333,9 @@ pub struct ConvergeDeps {
     pub remote: ApiClient,
     pub host: HostConfig,
     pub state_dir: PathBuf,
+    /// Host-level forwarded Herdr client socket. Pane streamers use this local
+    /// socket so one remote SSH transport can serve every mirrored pane.
+    pub client_socket: Option<PathBuf>,
     pub log: Logger,
     /// mirror closing a workspace/pane locally onto the remote (see MirrorConfig)
     pub close_remote_on_local_close: bool,
@@ -348,6 +351,7 @@ pub(crate) fn cmd_for_pane(
     host: &HostConfig,
     state_dir: &std::path::Path,
     sizes: &HashMap<String, LayoutRect>,
+    client_socket: Option<&std::path::Path>,
 ) -> impl Fn(&str) -> Vec<String> {
     let exe = std::env::current_exe()
         .map(|p| p.display().to_string())
@@ -362,6 +366,7 @@ pub(crate) fn cmd_for_pane(
     let ctl_path = crate::remote::control_path(state_dir, &host.name)
         .display()
         .to_string();
+    let client_socket = client_socket.map(|p| p.display().to_string());
     let sizes = sizes.clone();
     move |pane_id: &str| {
         let mut argv = vec![
@@ -385,6 +390,9 @@ pub(crate) fn cmd_for_pane(
         match &kind {
             crate::config::HostKind::Ssh => {
                 argv.extend(["--ctl-path".into(), ctl_path.clone()]);
+                if let Some(sock) = &client_socket {
+                    argv.extend(["--client-sock".into(), sock.clone()]);
+                }
             }
             crate::config::HostKind::DockerContainer(name) => {
                 argv.extend(["--container".into(), name.clone()]);
@@ -664,7 +672,12 @@ async fn converge_inner(deps: &ConvergeDeps, state: &mut HostState) -> Result<()
             sizes.insert(p.pane_id.clone(), p.rect.clone());
         }
     }
-    let cmd_for = cmd_for_pane(&deps.host, &deps.state_dir, &sizes);
+    let cmd_for = cmd_for_pane(
+        &deps.host,
+        &deps.state_dir,
+        &sizes,
+        deps.client_socket.as_deref(),
+    );
     let _ = std::fs::create_dir_all(mirror_pane_cwd(&deps.state_dir));
 
     // 1. detect mirrors that are gone locally. Always tombstone (never remove)
@@ -1599,7 +1612,7 @@ mod tests {
     #[test]
     fn ssh_pane_argv_is_stable() {
         let state_dir = std::path::Path::new("/state");
-        let cmd = cmd_for_pane(&ssh_host(), state_dir, &HashMap::new());
+        let cmd = cmd_for_pane(&ssh_host(), state_dir, &HashMap::new(), None);
         let argv = cmd("w1:p1");
         assert_eq!(
             argv[1..],
@@ -1617,13 +1630,54 @@ mod tests {
         assert!(argv[0].ends_with("herdr-mirror") || argv[0].contains("herdr_mirror"), "{}", argv[0]);
     }
 
+    #[test]
+    fn ssh_pane_argv_carries_host_client_socket() {
+        let state_dir = std::path::Path::new("/state");
+        let cmd = cmd_for_pane(
+            &ssh_host(),
+            state_dir,
+            &HashMap::new(),
+            Some(std::path::Path::new("/state/vps-client.sock")),
+        );
+        let argv = cmd("w1:p1");
+        assert_eq!(
+            argv[1..],
+            [
+                "pane",
+                "vps",
+                "w1:p1",
+                "--always-control",
+                "--ctl-path",
+                "/state/vps.ctl",
+                "--client-sock",
+                "/state/vps-client.sock",
+            ]
+        );
+        let parsed = crate::pane::parse_args(&argv[2..]).expect("pane argv must parse");
+        assert_eq!(parsed.client_socket.as_deref(), Some("/state/vps-client.sock"));
+    }
+
+    #[test]
+    fn docker_pane_argv_ignores_client_socket() {
+        let mut host = ssh_host();
+        host.kind = crate::config::HostKind::DockerContainer("container".into());
+        let cmd = cmd_for_pane(
+            &host,
+            std::path::Path::new("/state"),
+            &HashMap::new(),
+            Some(std::path::Path::new("/state/vps-client.sock")),
+        );
+        let argv = cmd("w1:p1");
+        assert!(!argv.iter().any(|arg| arg == "--client-sock"));
+    }
+
     /// When remote_bin is set, it must appear on the argv (cross-process contract
     /// with the pane parser) rather than being re-resolved by the streamer.
     #[test]
     fn ssh_pane_argv_carries_explicit_remote_bin() {
         let mut host = ssh_host();
         host.remote_bin = Some("/opt/herdr".into());
-        let cmd = cmd_for_pane(&host, std::path::Path::new("/state"), &HashMap::new());
+        let cmd = cmd_for_pane(&host, std::path::Path::new("/state"), &HashMap::new(), None);
         let argv = cmd("w1:p1");
         assert_eq!(
             argv[1..],
@@ -1649,7 +1703,7 @@ mod tests {
         host.target = "/Users/n/proj".into();
         host.kind = crate::config::HostKind::DockerFolder("/Users/n/proj".into());
         host.docker_bin = "/usr/local/bin/docker".into();
-        let cmd = cmd_for_pane(&host, std::path::Path::new("/state"), &HashMap::new());
+        let cmd = cmd_for_pane(&host, std::path::Path::new("/state"), &HashMap::new(), None);
         let argv = cmd("w1:p1");
         assert_eq!(
             argv[1..],
@@ -1679,7 +1733,7 @@ mod tests {
         // absolute path (GUI-launched daemons without /usr/local/bin on PATH)
         // would then silently get "cannot run docker".
         host.docker_bin = "/usr/local/bin/docker".into();
-        let cmd = cmd_for_pane(&host, std::path::Path::new("/state"), &HashMap::new());
+        let cmd = cmd_for_pane(&host, std::path::Path::new("/state"), &HashMap::new(), None);
         let argv = cmd("w1:p1");
         let parsed = crate::pane::parse_args(&argv[2..]).expect("pane must parse daemon argv");
         assert_eq!(parsed.pane_target, "w1:p1");
@@ -1695,7 +1749,7 @@ mod tests {
     fn ssh_pane_argv_without_always_control() {
         let mut host = ssh_host();
         host.always_control = false;
-        let cmd = cmd_for_pane(&host, std::path::Path::new("/state"), &HashMap::new());
+        let cmd = cmd_for_pane(&host, std::path::Path::new("/state"), &HashMap::new(), None);
         let argv = cmd("w1:p1");
         assert_eq!(
             argv[1..],

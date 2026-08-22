@@ -113,10 +113,12 @@ installed on whichever end runs it. See
 [Remote plugin keys](#remote-plugin-keys) for binding it.
 
 **Continuous streaming** — every mirror pane streams its remote pane live for
-its whole lifetime, each over its own connection, so panes are never
-blank and a busy pane can't contend with or drop another's stream. Sidebar
-agent status is daemon-driven, not stream-derived, so every agent's state stays
-live regardless of what any stream is doing.
+its whole lifetime. On SSH hosts, the daemon creates one ControlMaster and one
+forwarded remote Herdr client socket per host; every pane uses a local
+`herdr terminal session` client over that socket, so pane count does not create
+one SSH process per pane. Sidebar agent status is daemon-driven, not
+stream-derived, so every agent's state stays live regardless of what any stream
+is doing.
 
 ### Keybinds
 

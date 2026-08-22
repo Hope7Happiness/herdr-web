@@ -25,7 +25,7 @@ pub struct Cell {
     pub ch: char,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Grid {
     pub rows: Vec<Vec<Option<Cell>>>,
     pub width: usize,
@@ -221,7 +221,11 @@ fn parse_osc8(seq: &[char]) -> Option<Option<Rc<str>>> {
 #[derive(Default)]
 pub struct Renderer {
     last_rows: Vec<Option<String>>,
+    last_cells: Vec<Option<Vec<Option<Cell>>>>,
     status_text: String,
+    painted_once: bool,
+    last_offset_r: Option<usize>,
+    last_size: Option<(usize, usize)>,
 }
 
 impl Renderer {
@@ -231,11 +235,19 @@ impl Renderer {
 
     pub fn invalidate(&mut self) {
         self.last_rows.clear();
+        self.last_cells.clear();
+        self.painted_once = false;
+        self.last_offset_r = None;
+        self.last_size = None;
     }
 
     pub fn status(&mut self, text: &str) {
+        if self.status_text == text {
+            return;
+        }
         self.status_text = text.to_string();
         self.last_rows.pop(); // force bottom row repaint
+        self.last_cells.pop();
     }
 
     /// Build the ANSI to paint the grid into an out_cols × out_rows terminal.
@@ -244,21 +256,38 @@ impl Renderer {
         let bottom = grid.content_bottom.max(grid.cursor_row);
         let offset_r = (bottom + 1).saturating_sub(out_rows);
         let mut out = String::from("\x1b[?2026h\x1b[?25l");
+        let next_cursor_position = {
+            let cr = grid.cursor_row as isize - offset_r as isize;
+            if cr >= 0 && (cr as usize) < out_rows && self.status_text.is_empty() {
+                Some((cr as usize, grid.cursor_col.min(out_cols.saturating_sub(1))))
+            } else {
+                None
+            }
+        };
+        let next_cursor_visible = next_cursor_position.is_some() && grid.cursor_visible;
+        let mut changed = false;
         // paint every local row (missing rows blank-fill), or the pane stays
         // blank before the first frame and the status row is unreachable
         let row_count = out_rows;
         if self.last_rows.len() < row_count {
             self.last_rows.resize(row_count, None);
         }
+        if self.last_cells.len() < row_count {
+            self.last_cells.resize(row_count, None);
+        }
+        let stable_viewport = self.last_offset_r == Some(offset_r) && self.last_size == Some((out_cols, out_rows));
         for r in 0..row_count {
             let empty = Vec::new();
             let cells = grid.rows.get(r + offset_r).unwrap_or(&empty);
+            let limit = out_cols.min(grid.width);
+            let visible_cells = (0..out_cols)
+                .map(|c| if c < limit { cells.get(c).cloned().flatten() } else { None })
+                .collect::<Vec<_>>();
             let mut line = String::new();
             let mut prev_sgr: Option<&str> = None;
             // No link is open at the start of a row: every row is repainted from
             // its own CUP, so hyperlink state never carries in from the row above.
             let mut prev_link: Option<&str> = None;
-            let limit = out_cols.min(grid.width);
             let mut c = 0usize;
             while c < limit {
                 let cell = cells.get(c).and_then(|c| c.as_ref());
@@ -311,18 +340,114 @@ impl Renderer {
                 format!("{line}\x1b[0m\x1b[K")
             };
             if self.last_rows.get(r).map(|p| p.as_deref()) != Some(Some(painted.as_str())) {
-                let _ = write!(out, "\x1b[{};1H", r + 1);
-                out.push_str(&painted);
+                let previous = self.last_cells.get(r).and_then(|row| row.as_ref());
+                let patch_spans = (!is_status_row && stable_viewport && self.painted_once)
+                    .then(|| previous.map(|old| changed_spans(old, &visible_cells)))
+                    .flatten()
+                    .filter(|spans| {
+                        let changed: usize = spans.iter().map(|(start, end)| end - start).sum();
+                        !spans.is_empty() && spans.len() <= 8 && changed < out_cols.saturating_div(2).max(1)
+                    });
+                if let Some(spans) = patch_spans {
+                    for (start, end) in spans {
+                        let _ = write!(out, "\x1b[{};{}H", r + 1, start + 1);
+                        out.push_str(&paint_segment(&visible_cells, start, end));
+                    }
+                } else {
+                    let _ = write!(out, "\x1b[{};1H", r + 1);
+                    out.push_str(&painted);
+                }
                 self.last_rows[r] = Some(painted);
+                self.last_cells[r] = Some(visible_cells);
+                changed = true;
             }
         }
-        let cr = grid.cursor_row as isize - offset_r as isize;
-        if grid.cursor_visible && cr >= 0 && (cr as usize) < out_rows && self.status_text.is_empty() {
-            let _ = write!(out, "\x1b[{};{}H\x1b[?25h", cr + 1, grid.cursor_col.min(out_cols.saturating_sub(1)) + 1);
+        if !changed && self.painted_once {
+            // Cursor-only frames are common while a TUI blinks or moves its
+            // insertion point. Do not emit CUP/cursor control for them: the
+            // local cursor is cosmetic, while these writes can flash a line on
+            // terminals that do not fully hide synchronized output.
+            return String::new();
+        }
+        if let Some((row, col)) = next_cursor_position.filter(|_| next_cursor_visible) {
+            let _ = write!(out, "\x1b[{};{}H\x1b[?25h", row + 1, col + 1);
         }
         out.push_str("\x1b[?2026l");
+        self.painted_once = true;
+        self.last_offset_r = Some(offset_r);
+        self.last_size = Some((out_cols, out_rows));
         out
     }
+}
+
+/// Group changed cells into short paint spans. Expand each span by one column
+/// on either side so replacing a wide glyph also clears its continuation cell.
+fn changed_spans(old: &[Option<Cell>], new: &[Option<Cell>]) -> Vec<(usize, usize)> {
+    let width = new.len();
+    let mut raw = Vec::new();
+    let mut c = 0usize;
+    while c < width {
+        if old.get(c) == new.get(c) {
+            c += 1;
+            continue;
+        }
+        let start = c;
+        c += 1;
+        while c < width && old.get(c) != new.get(c) {
+            c += 1;
+        }
+        raw.push((start.saturating_sub(1), (c + 1).min(width)));
+    }
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in raw {
+        if let Some(last) = merged.last_mut().filter(|last| start <= last.1) {
+            last.1 = last.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    merged
+}
+
+/// Paint an independently-addressed row segment. SGR and OSC 8 state starts
+/// clean and is closed before returning, so separate spans cannot leak state.
+fn paint_segment(cells: &[Option<Cell>], start: usize, end: usize) -> String {
+    let mut out = String::new();
+    let mut prev_sgr: Option<&str> = None;
+    let mut prev_link: Option<&str> = None;
+    let mut c = start;
+    while c < end {
+        let cell = cells.get(c).and_then(|cell| cell.as_ref());
+        let sgr = cell.map(|cell| &*cell.sgr).unwrap_or("\x1b[0m");
+        if prev_sgr != Some(sgr) {
+            out.push_str(if sgr.is_empty() { "\x1b[0m" } else { sgr });
+            prev_sgr = Some(sgr);
+        }
+        let link = cell.and_then(|cell| cell.link.as_deref());
+        if prev_link != link {
+            match link {
+                Some(uri) => {
+                    let _ = write!(out, "\x1b]8;;{uri}\x1b\\");
+                }
+                None => out.push_str("\x1b]8;;\x1b\\"),
+            }
+            prev_link = link;
+        }
+        let ch = cell.map(|cell| cell.ch).unwrap_or(' ');
+        let width = cw(ch);
+        if width == 2 && c + 1 >= cells.len() {
+            out.push(' ');
+            c += 1;
+        } else {
+            out.push(ch);
+            c += width;
+        }
+    }
+    if prev_link.is_some() {
+        out.push_str("\x1b]8;;\x1b\\");
+    }
+    out.push_str("\x1b[0m");
+    out
 }
 
 #[cfg(test)]
@@ -477,6 +602,53 @@ mod tests {
         // unchanged rows are not repainted
         let out3 = r.paint(&g, 5, 3);
         assert!(!out3.contains("last"));
+    }
+
+    #[test]
+    fn unchanged_paint_emits_nothing() {
+        let mut g = Grid::new();
+        g.resize(5, 2);
+        g.apply("\x1b[1;1Hhello");
+        let mut r = Renderer::new();
+        assert!(!r.paint(&g, 5, 2).is_empty());
+        assert!(r.paint(&g, 5, 2).is_empty());
+    }
+
+    #[test]
+    fn identical_status_does_not_invalidate_rows() {
+        let mut g = Grid::new();
+        g.resize(5, 1);
+        g.apply("\x1b[1;1Hhello");
+        let mut r = Renderer::new();
+        r.paint(&g, 5, 1);
+        r.status("");
+        assert!(r.paint(&g, 5, 1).is_empty());
+    }
+
+    #[test]
+    fn cursor_blink_does_not_repaint_content() {
+        let mut g = Grid::new();
+        g.resize(5, 1);
+        g.apply("\x1b[1;1Hhello\x1b[1;6H\x1b[?25h");
+        let mut r = Renderer::new();
+        r.paint(&g, 5, 1);
+        g.apply("\x1b[1;6H\x1b[?25l");
+        assert!(r.paint(&g, 5, 1).is_empty());
+    }
+
+    #[test]
+    fn style_animation_repaints_only_a_small_cell_span() {
+        let mut g = Grid::new();
+        g.resize(12, 1);
+        g.apply("\x1b[1;1H\x1b[38;2;100;100;100mstatus text");
+        let mut r = Renderer::new();
+        r.paint(&g, 12, 1);
+
+        g.apply("\x1b[1;5H\x1b[38;2;200;200;200mu");
+        let out = r.paint(&g, 12, 1);
+        assert!(out.contains("\x1b[1;4H"), "changed cell should be painted from a bounded span: {out:?}");
+        assert!(!out.contains("\x1b[1;1H"), "a one-cell style change must not repaint the full row: {out:?}");
+        assert!(!out.contains("status text"), "unchanged row content was repainted: {out:?}");
     }
 
     const LINK: &str = "\x1b]8;;https://example.com/x\x1b\\";

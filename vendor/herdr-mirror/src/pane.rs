@@ -16,8 +16,10 @@
 //   --always-control    start and stay in control: writable, no idle release,
 //                       and sized to the local pane so it fills
 //
-// Every stream gets its own direct ssh connection (no shared ControlMaster):
-// isolated, and nothing persists to go stale on a flaky network.
+// SSH hosts normally use one host-level forwarded Herdr client socket. Each
+// pane then starts a local `herdr terminal session` client, so pane count does
+// not multiply SSH processes. Direct ssh remains a compatibility fallback when
+// the remote client socket cannot be forwarded.
 //
 // One owner of all state, message-driven: frames, keystrokes, timers, and
 // ssh-child exits arrive on one channel; a session generation number tags
@@ -64,6 +66,9 @@ pub struct Args {
     /// (`ssh -S <path>`) to skip a handshake. None → polls connect directly.
     ///
     pub ctl_path: Option<String>,
+    /// host-level forwarded Herdr client socket. When present, terminal session
+    /// clients connect through it instead of spawning a per-pane ssh process.
+    pub client_socket: Option<String>,
     /// container to exec into instead of ssh. `None` = ssh host.
     pub container: Option<ContainerArg>,
 }
@@ -89,6 +94,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args> {
         control_idle_secs: 3600,
         always_control: false,
         ctl_path: None,
+        client_socket: None,
         container: None,
     };
     let mut container_name: Option<String> = None;
@@ -115,6 +121,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args> {
             }
             "--always-control" => args.always_control = true,
             "--ctl-path" => args.ctl_path = Some(next("--ctl-path")?),
+            "--client-sock" => args.client_socket = Some(next("--client-sock")?),
             "--container" => container_name = Some(next("--container")?),
             "--container-folder" => container_folder = Some(next("--container-folder")?),
             "--docker-bin" => docker_bin = next("--docker-bin")?,
@@ -187,6 +194,8 @@ struct Session {
     mode: Mode,
     pid: i32,
     stdin: ChildStdin,
+    cols: usize,
+    rows: usize,
 }
 
 /// POSIX single-quote: an embedded ' can't break the remote shell parse.
@@ -215,13 +224,25 @@ fn spawn_session(args: &Args, mode: Mode, cols: usize, rows: usize, gen: u64, tx
     );
     // ssh and docker differ only in how the command is carried; the streaming
     // contract (piped stdio, herdr's frames on stdout) is identical
-    let mut builder = match &args.container {
-        None => {
+    let mut builder = match (&args.container, &args.client_socket) {
+        (None, Some(client_socket)) => {
+            let bin = std::env::var("HERDR_BIN_PATH").unwrap_or_else(|_| "herdr".to_string());
+            let mut c = tokio::process::Command::new(bin);
+            c.args(["terminal", "session", mode.as_str()])
+                .arg(&args.pane_target)
+                .args(["--cols", &cols.to_string(), "--rows", &rows.to_string()])
+                .env("HERDR_CLIENT_SOCKET_PATH", client_socket)
+                // A pane inherits the local Herdr API socket. Terminal session
+                // must use the forwarded remote client socket instead.
+                .env_remove("HERDR_SOCKET_PATH");
+            c
+        }
+        (None, None) => {
             let mut c = tokio::process::Command::new("ssh");
             c.args(crate::remote::SSH_COMMON_OPTS).arg(&args.ssh_target).arg(cmd);
             c
         }
-        Some(ct) => {
+        (Some(ct), _) => {
             // resolve per spawn so a rebuilt container is picked up on
             // reconnect. Bounded: this runs on the pane's single-threaded
             // runtime, so a wedged Docker daemon must not be able to freeze
@@ -285,7 +306,7 @@ fn spawn_session(args: &Args, mode: Mode, cols: usize, rows: usize, gen: u64, tx
         let _ = tx.send(Msg::SessionExit { gen, mode, reason, uptime: started.elapsed() }).await;
     });
 
-    Ok(Session { gen, mode, pid, stdin })
+    Ok(Session { gen, mode, pid, stdin, cols, rows })
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +461,11 @@ enum MouseAction {
 fn mouse_action(remote_is_shell: Option<bool>, btn: u32, press: bool) -> MouseAction {
     if press && (btn == 64 || btn == 65) {
         MouseAction::Scroll { up: btn == 64 }
+    } else if btn & 4 != 0 {
+        // Shift-drag is the conventional terminal escape hatch from an
+        // application's mouse mode. Let Herdr/the host terminal own the
+        // selection so mirrored TUI text can be copied locally.
+        MouseAction::Drop
     } else if btn == 66 || btn == 67 {
         MouseAction::Drop
     } else if remote_is_shell == Some(false) {
@@ -449,23 +475,71 @@ fn mouse_action(remote_is_shell: Option<bool>, btn: u32, press: bool) -> MouseAc
     }
 }
 
-fn contains_wheel_press(bytes: &[u8]) -> bool {
-    let mut i = 0;
-    while i < bytes.len() {
-        if let Some((btn, _, _, press, len)) = parse_mouse(bytes, i) {
-            if press && (btn == 64 || btn == 65) {
-                return true;
-            }
-            i += len;
-        } else {
-            i += 1;
-        }
-    }
-    false
+fn scroll_message(up: bool, x: u32, y: u32) -> serde_json::Value {
+    json!({
+        "type": "terminal.scroll",
+        "direction": if up { "up" } else { "down" },
+        "lines": 3,
+        "source": "wheel",
+        "column": x.saturating_sub(1),
+        "row": y.saturating_sub(1),
+        "modifiers": 0,
+    })
 }
 
 fn has_mouse_seq(bytes: &[u8]) -> bool {
     bytes.windows(3).any(|w| w == [0x1b, b'[', b'<'])
+}
+
+/// Detect a passive viewport jumping backwards into scrollback. The remote
+/// stream can emit these as a short cycle while an idle TUI redraws: most
+/// existing non-empty rows reappear several rows lower, then the live viewport
+/// returns. New output moves existing rows upward, so it does not match.
+fn dominant_downward_shift(before: &Grid, after: &Grid) -> Option<usize> {
+    if before.width != after.width || before.height != after.height || before.height < 6 {
+        return None;
+    }
+    let old = before.text_lines();
+    let new = after.text_lines();
+    let max_shift = 12.min(before.height / 3);
+    (2..=max_shift)
+        .filter_map(|shift| {
+            let mut comparable = 0usize;
+            let mut matches = 0usize;
+            for row in 0..before.height.saturating_sub(shift) {
+                if old[row].is_empty() {
+                    continue;
+                }
+                comparable += 1;
+                if old[row] == new[row + shift] {
+                    matches += 1;
+                }
+            }
+            (matches >= 8 && matches * 100 >= comparable.max(1) * 70).then_some((shift, matches))
+        })
+        .max_by_key(|(_, matches)| *matches)
+        .map(|(shift, _)| shift)
+}
+
+/// A remote idle redraw can alternate between two unrelated viewport snapshots
+/// without any terminal input. Treat a large partial frame as transient until
+/// the following frame confirms it; this catches A -> B -> A flashes while
+/// allowing a continuously changing stream to advance by one frame.
+fn large_partial_change(before: &Grid, after: &Grid) -> bool {
+    if before.width != after.width || before.height != after.height || before.height < 10 {
+        return false;
+    }
+    let old = before.text_lines();
+    let new = after.text_lines();
+    let changed = old.iter().zip(new.iter()).filter(|(a, b)| a != b).count();
+    // Five rows is the smallest viewport swap that has been observed in the
+    // remote TUI. Keep the proportional guard low enough to catch that on a
+    // 66-row pane, while still leaving ordinary one-line typing immediate.
+    changed >= 5 && changed * 100 >= before.height.max(1) * 7
+}
+
+fn same_grid_content(a: &Grid, b: &Grid) -> bool {
+    a.width == b.width && a.height == b.height && a.text_lines() == b.text_lines()
 }
 
 
@@ -480,6 +554,9 @@ struct App {
     args: Args,
     tty: bool,
     grid: Grid,
+    /// Protocol-authoritative grid. Passive scrollback-like frames update this
+    /// baseline without being committed to the visible `grid`.
+    wire_grid: Grid,
     renderer: Renderer,
     tx: mpsc::Sender<Msg>,
 
@@ -496,8 +573,22 @@ struct App {
     control_failures: u32,
     control_sticky: bool,
     pending_input: Vec<Vec<u8>>,
+    pending_control: Vec<serde_json::Value>,
     last_input: Instant,
     hint_clear_at: Option<Instant>,
+    /// Debounced observe reconnect after the local pane gets a real viewport.
+    /// Observe cannot resize in place, but reconnecting it is read-only and
+    /// lets the remote server stream enough rows/columns for the new viewport.
+    /// The check is retried while the pane is still on its headless placeholder
+    /// size: Herdr can apply the real PTY dimensions a few seconds after the
+    /// streamer is spawned, with no second SIGWINCH delivered to the child.
+    observe_resize_at: Option<Instant>,
+    /// Passive viewport-shift suppression is disabled briefly after explicit
+    /// input/scroll, when a downward shift is user-requested rather than noise.
+    allow_viewport_shift_until: Option<Instant>,
+    /// Candidate observe frame held for one confirmation frame. Idle remote
+    /// redraws can briefly replace the entire viewport, then restore it.
+    pending_frame: Option<Grid>,
     /// predictive local echo — draws keystrokes optimistically, frame-verified
     predict: Predictor,
     /// remote pane foreground: Some(true)=shell (keep mouse local, no garbage),
@@ -647,6 +738,7 @@ impl App {
 
     async fn connect(&mut self, m: Mode) {
         self.mode = m;
+        self.pending_frame = None;
         // re-earn prediction confidence against the new session's frames
         self.predict = Predictor::new();
         let (cols, rows) = match m {
@@ -661,6 +753,10 @@ impl App {
             Ok(mut s) => {
                 if m == Mode::Control {
                     self.last_input = Instant::now();
+                    for msg in std::mem::take(&mut self.pending_control) {
+                        let line = msg.to_string() + "\n";
+                        let _ = s.stdin.write_all(line.as_bytes()).await;
+                    }
                     // keystrokes typed while the control session was spinning up
                     for buf in std::mem::take(&mut self.pending_input) {
                         let line = json!({ "type": "terminal.input", "bytes": B64.encode(&buf) }).to_string() + "\n";
@@ -668,6 +764,7 @@ impl App {
                     }
                 } else {
                     self.pending_input.clear();
+                    self.pending_control.clear();
                 }
                 self.session = Some(s);
                 // warm the foreground classification before the user mouses
@@ -728,13 +825,55 @@ impl App {
         let Some(bytes) = &frame.bytes else { return };
         self.backoff_idx = 0;
         self.renderer.status("");
-        self.grid
-            .resize(frame.width.unwrap_or(self.grid.width), frame.height.unwrap_or(self.grid.height));
+        self.wire_grid.resize(
+            frame.width.unwrap_or(self.wire_grid.width),
+            frame.height.unwrap_or(self.wire_grid.height),
+        );
         if frame.full == Some(true) {
-            self.grid.clear();
+            self.wire_grid.clear();
         }
         if let Ok(decoded) = B64.decode(bytes) {
-            self.grid.apply(&String::from_utf8_lossy(&decoded));
+            self.wire_grid.apply(&String::from_utf8_lossy(&decoded));
+            let allow_shift = self.allow_viewport_shift_until.is_some_and(|until| until > Instant::now());
+            if frame.full != Some(true) && !allow_shift && dominant_downward_shift(&self.grid, &self.wire_grid).is_some() {
+                self.pending_frame = None;
+                return;
+            }
+            // Control frames can exhibit the same transient viewport swap while
+            // a remote TUI redraws in response to typing. Keep the one-frame
+            // confirmation rule in both modes; full frames and explicit scroll
+            // remain authoritative and immediate.
+            if frame.full == Some(true) || allow_shift {
+                self.pending_frame = None;
+                self.grid = self.wire_grid.clone();
+            } else if large_partial_change(&self.grid, &self.wire_grid) {
+                let candidate = self.wire_grid.clone();
+                match self.pending_frame.take() {
+                    None => {
+                        self.pending_frame = Some(candidate);
+                        return;
+                    }
+                    Some(_previous) if same_grid_content(&candidate, &self.grid) => {
+                        // A -> B -> A: the middle frame was a transient flash.
+                        return;
+                    }
+                    Some(previous) if same_grid_content(&candidate, &previous) => {
+                        self.grid = candidate;
+                    }
+                    Some(_previous) => {
+                        // A sequence of unrelated large snapshots (A -> B ->
+                        // C -> A) is another form of the remote redraw glitch.
+                        // Keep the last stable viewport visible until one
+                        // candidate repeats; never expose an unconfirmed B/C
+                        // intermediate just because it arrived first.
+                        self.pending_frame = Some(candidate);
+                        return;
+                    }
+                }
+            } else {
+                self.pending_frame = None;
+                self.grid = self.wire_grid.clone();
+            }
             // reconcile predictive echo against the authoritative frame
             self.predict.on_frame(&self.grid);
         }
@@ -787,15 +926,24 @@ impl App {
         if self.mode == Mode::Observe || self.switching_to == Some(Mode::Observe) {
             // no quit key: the wrapper's lifecycle belongs to the hosting pane
             if has_mouse_seq(&buf) {
-                // wheel escalates only after a soft release; a stray wheel
-                // while glancing shouldn't grab the remote's lock
-                if contains_wheel_press(&buf) {
-                    if self.control_sticky {
-                        self.control_sticky = false;
-                        self.switch_mode(Mode::Control);
+                // Scrolling is an intentional remote interaction: take control
+                // and preserve the first wheel event instead of swallowing it.
+                let mut i = 0usize;
+                while i < buf.len() {
+                    if let Some((btn, x, y, press, len)) = parse_mouse(&buf, i) {
+                        if press && (btn == 64 || btn == 65) {
+                            self.pending_control.push(scroll_message(btn == 64, x, y));
+                            self.allow_viewport_shift_until = Some(Instant::now() + Duration::from_secs(2));
+                            self.pending_frame = None;
+                        }
+                        i += len;
                     } else {
-                        self.hint("read-only — type to take control");
+                        i += 1;
                     }
+                }
+                if !self.pending_control.is_empty() {
+                    self.control_sticky = false;
+                    self.switch_mode(Mode::Control);
                 }
                 return;
             }
@@ -844,15 +992,9 @@ impl App {
             if let Some((btn, x, y, press, len)) = parse_mouse(&buf, i) {
                 match mouse_action(self.remote_is_shell, btn, press) {
                     MouseAction::Scroll { up } => {
-                        scrolls.push(json!({
-                            "type": "terminal.scroll",
-                            "direction": if up { "up" } else { "down" },
-                            "lines": 3,
-                            "source": "wheel",
-                            "column": x.saturating_sub(1),
-                            "row": y.saturating_sub(1),
-                            "modifiers": 0,
-                        }));
+                        scrolls.push(scroll_message(up, x, y));
+                        self.allow_viewport_shift_until = Some(Instant::now() + Duration::from_secs(2));
+                        self.pending_frame = None;
                     }
                     MouseAction::ForwardRaw => rest.extend_from_slice(&buf[i..i + len]),
                     MouseAction::Drop => {}
@@ -940,6 +1082,7 @@ pub async fn run(args: Args) -> Result<()> {
         args,
         tty,
         grid: Grid::new(),
+        wire_grid: Grid::new(),
         renderer: Renderer::new(),
         tx,
         mode: Mode::Observe,
@@ -952,8 +1095,12 @@ pub async fn run(args: Args) -> Result<()> {
         control_failures: 0,
         control_sticky: false,
         pending_input: Vec::new(),
+        pending_control: Vec::new(),
         last_input: Instant::now(),
         hint_clear_at: None,
+        observe_resize_at: None,
+        allow_viewport_shift_until: None,
+        pending_frame: None,
         predict: Predictor::new(),
         remote_is_shell: None,
         fg_poll_at: None,
@@ -980,6 +1127,12 @@ pub async fn run(args: Args) -> Result<()> {
     let mut sigwinch = signal(SignalKind::window_change())?;
 
     app.connect(initial_mode(app.args.always_control, term_size())).await;
+    if app.mode == Mode::Observe {
+        // The pane can receive its final local layout just after the streamer
+        // starts, before SIGWINCH is delivered. One delayed size check covers
+        // that startup race without touching the remote PTY.
+        app.observe_resize_at = Some(Instant::now() + Duration::from_millis(150));
+    }
     // the pane may have been laid out while the session was spawning; the signal
     // for that is buffered above, but check directly too
     if app.mode == Mode::Observe && initial_mode(app.args.always_control, term_size()) == Mode::Control
@@ -1002,6 +1155,7 @@ pub async fn run(args: Args) -> Result<()> {
             app.switch_at,
             app.reconnect_at.map(|(t, _)| t),
             app.hint_clear_at,
+            app.observe_resize_at,
             idle_at,
             app.predict.deadline(),
             app.settle_at,
@@ -1035,6 +1189,12 @@ pub async fn run(args: Args) -> Result<()> {
                 if app.mode == Mode::Control {
                     let (cols, rows) = term_size();
                     app.send(json!({ "type": "terminal.resize", "cols": cols, "rows": rows })).await;
+                } else if app.switching_to.is_none() {
+                    // A newly opened workspace is laid out after its streamer
+                    // starts. Refresh the read-only stream at the real size;
+                    // otherwise it remains cropped to the headless placeholder
+                    // until the user types and takes control.
+                    app.observe_resize_at = Some(Instant::now() + Duration::from_millis(100));
                 }
                 app.paint();
             }
@@ -1059,6 +1219,22 @@ pub async fn run(args: Args) -> Result<()> {
                     app.hint_clear_at = None;
                     app.renderer.status("");
                     app.paint();
+                }
+                if app.observe_resize_at.is_some_and(|t| t <= now) {
+                    app.observe_resize_at = None;
+                    if app.mode == Mode::Observe && app.switching_to.is_none() {
+                        let wanted = app.observe_size();
+                        let current = app.session.as_ref().map(|s| (s.cols, s.rows));
+                        if current != Some(wanted) {
+                            app.connect(Mode::Observe).await;
+                        }
+                        if !size_is_trusted(wanted) {
+                            // Keep checking until a real local client lays out
+                            // the pane. This is intentionally read-only and
+                            // never resizes the remote PTY itself.
+                            app.observe_resize_at = Some(now + Duration::from_millis(500));
+                        }
+                    }
                 }
                 if idle_at.is_some_and(|t| t <= now) && app.mode == Mode::Control && app.switching_to.is_none() {
                     app.control_sticky = true;
@@ -1101,6 +1277,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn passive_scrollback_jump_is_detected_but_new_output_is_not() {
+        let mut before = Grid::new();
+        before.resize(30, 30);
+        for row in 0..12 {
+            before.apply(&format!("\x1b[{};1Hline-{row:02}", row + 1));
+        }
+
+        let mut down = Grid::new();
+        down.resize(30, 30);
+        for row in 0..12 {
+            down.apply(&format!("\x1b[{};1Hline-{row:02}", row + 9));
+        }
+        assert_eq!(dominant_downward_shift(&before, &down), Some(8));
+
+        let mut up = Grid::new();
+        up.resize(30, 30);
+        for row in 2..12 {
+            up.apply(&format!("\x1b[{};1Hline-{row:02}", row - 1));
+        }
+        assert_eq!(dominant_downward_shift(&before, &up), None);
+    }
+
+    #[test]
+    fn large_partial_change_is_debounced_but_small_change_is_immediate() {
+        let mut before = Grid::new();
+        before.resize(40, 20);
+        for row in 0..20 {
+            before.apply(&format!("\x1b[{};1Hline-{row:02}", row + 1));
+        }
+
+        let mut large = before.clone();
+        for row in 0..8 {
+            large.apply(&format!("\x1b[{};1Hother-{row:02}", row + 1));
+        }
+        assert!(large_partial_change(&before, &large));
+
+        let mut five = before.clone();
+        for row in 0..5 {
+            five.apply(&format!("\x1b[{};1Hfive-{row:02}", row + 1));
+        }
+        assert!(large_partial_change(&before, &five));
+
+        let mut small = before.clone();
+        small.apply("\x1b[1;1Hchanged");
+        assert!(!large_partial_change(&before, &small));
+    }
+
+    #[test]
     fn wheel_always_semantic_scroll_even_on_tui_foreground() {
         // remote foreground classified as a TUI (e.g. `claude`) — wheel must
         // still produce a semantic scroll, not a raw forward, or it silently
@@ -1112,6 +1336,7 @@ mod tests {
         assert_eq!(mouse_action(Some(true), 65, true), MouseAction::Scroll { up: false });
         // non-wheel clicks/drags keep the existing foreground-based routing
         assert_eq!(mouse_action(Some(false), 0, true), MouseAction::ForwardRaw); // TUI click
+        assert_eq!(mouse_action(Some(false), 4, true), MouseAction::Drop); // Shift-click selects locally
         assert_eq!(mouse_action(Some(true), 0, true), MouseAction::Drop); // shell click
         assert_eq!(mouse_action(None, 0, true), MouseAction::Drop); // unclassified click
     }
@@ -1121,9 +1346,6 @@ mod tests {
         let seq = b"\x1b[<64;10;5M";
         let (btn, x, y, press, len) = parse_mouse(seq, 0).unwrap();
         assert_eq!((btn, x, y, press, len), (64, 10, 5, true, seq.len()));
-        assert!(contains_wheel_press(seq));
-        assert!(!contains_wheel_press(b"\x1b[<0;3;4M")); // click, not wheel
-        assert!(!contains_wheel_press(b"\x1b[<64;10;5m")); // release, not press
         assert!(has_mouse_seq(b"xx\x1b[<0;1;1Myy"));
         assert!(!has_mouse_seq(b"plain text"));
     }
