@@ -627,17 +627,12 @@ impl App {
             self.renderer.invalidate();
         }
         let (cols, rows) = term_size();
-        let mut out = self.renderer.paint(&self.grid, cols, rows);
-        // inject the prediction overlay inside the synchronized-update block
-        let overlay = self.predict.overlay(&self.grid, cols, rows);
-        if !overlay.is_empty() {
-            const SYNC_END: &str = "\x1b[?2026l";
-            if let Some(pos) = out.rfind(SYNC_END) {
-                out.insert_str(pos, &overlay);
-            } else {
-                out.push_str(&overlay);
-            }
-        }
+        let out = self.renderer.paint(&self.grid, cols, rows);
+        // Do not paint a local prediction over the remote frame.  A terminal
+        // cell's background is not always represented at the cursor position;
+        // an optimistic character would therefore create a transient default
+        // (often black) rectangle while the authoritative frame is in flight.
+        // Predictor state is still retained for confirmation and timeout logic.
         write_stdout(&out);
     }
 

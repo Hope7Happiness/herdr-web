@@ -5,12 +5,8 @@
 // draws printable keystrokes into the local pane immediately and reconciles
 // them against the authoritative frames when they arrive.
 //
-// Safety valve: predictions are VERIFIED silently before being displayed —
-// optimistic echo turns on only after CONFIRM_THRESHOLD consecutive
-// keystrokes are confirmed by frames, and one contradiction turns it back
-// off. Full-screen apps (vim normal mode, htop) and no-echo prompts
-// (passwords) therefore self-disable, and a timeout wipes unconfirmed ghosts
-// so predicted password characters never linger on screen.
+// The predictor verifies input silently so stale local state can be cleared;
+// the pane renderer does not paint an optimistic echo over the remote frame.
 
 use std::time::Duration;
 
@@ -18,6 +14,7 @@ use tokio::time::Instant; // matches the pane loop's deadline type
 
 use crate::grid::Grid;
 
+#[cfg(test)]
 const CONFIRM_THRESHOLD: u32 = 2;
 const STREAK_CAP: u32 = 10;
 const MAX_PENDING: usize = 32;
@@ -87,6 +84,7 @@ impl Predictor {
         Predictor::default()
     }
 
+    #[cfg(test)]
     fn displaying(&self) -> bool {
         self.streak >= CONFIRM_THRESHOLD
     }
@@ -263,6 +261,7 @@ impl Predictor {
 
     /// ANSI overlay for displayed predictions. Window math mirrors
     /// Renderer::paint (bottom-anchored).
+    #[cfg(test)]
     pub fn overlay(&self, grid: &Grid, out_cols: usize, out_rows: usize) -> String {
         use std::fmt::Write as _;
         if !self.displaying() || self.pending.is_empty() {

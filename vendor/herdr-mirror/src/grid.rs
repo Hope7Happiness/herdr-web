@@ -415,10 +415,18 @@ fn paint_segment(cells: &[Option<Cell>], start: usize, end: usize) -> String {
     let mut out = String::new();
     let mut prev_sgr: Option<&str> = None;
     let mut prev_link: Option<&str> = None;
+    // Empty cells do not carry their own SGR, but a partial repaint still has
+    // to preserve the row's background. Reuse a styled cell in this span
+    // rather than resetting empty cells to the terminal default background.
+    let fallback_sgr = cells
+        .get(start..end)
+        .and_then(|span| span.iter().find_map(|cell| cell.as_ref()))
+        .map(|cell| &*cell.sgr)
+        .unwrap_or("\x1b[0m");
     let mut c = start;
     while c < end {
         let cell = cells.get(c).and_then(|cell| cell.as_ref());
-        let sgr = cell.map(|cell| &*cell.sgr).unwrap_or("\x1b[0m");
+        let sgr = cell.map(|cell| &*cell.sgr).unwrap_or(fallback_sgr);
         if prev_sgr != Some(sgr) {
             out.push_str(if sgr.is_empty() { "\x1b[0m" } else { sgr });
             prev_sgr = Some(sgr);
@@ -649,6 +657,14 @@ mod tests {
         assert!(out.contains("\x1b[1;4H"), "changed cell should be painted from a bounded span: {out:?}");
         assert!(!out.contains("\x1b[1;1H"), "a one-cell style change must not repaint the full row: {out:?}");
         assert!(!out.contains("status text"), "unchanged row content was repainted: {out:?}");
+    }
+
+    #[test]
+    fn partial_paint_inherits_background_for_empty_cells() {
+        let styled = Cell { sgr: Rc::from("\x1b[48;5;4m"), link: None, ch: 'X' };
+        let cells = vec![Some(styled), None, None];
+        let out = paint_segment(&cells, 0, 3);
+        assert!(out.starts_with("\x1b[48;5;4mX  "), "empty cells reset the background: {out:?}");
     }
 
     const LINK: &str = "\x1b]8;;https://example.com/x\x1b\\";
