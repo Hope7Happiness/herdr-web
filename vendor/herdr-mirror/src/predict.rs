@@ -280,9 +280,26 @@ impl Predictor {
             if wr >= out_rows || p.col >= out_cols {
                 continue;
             }
+            // A prediction is an overlay, not a new terminal paint. Reuse the
+            // target cell's style, or the nearest styled cell to its left when
+            // the cursor sits just past the current text. Painting with SGR 0
+            // here would force the terminal's default (often black) background
+            // over the remote pane until the next frame arrives.
+            let row = grid.rows.get(p.row);
+            let style = row
+                .and_then(|row| row.get(p.col))
+                .and_then(|cell| cell.as_ref())
+                .map(|cell| cell.sgr.clone())
+                .or_else(|| {
+                    row.and_then(|row| row[..p.col.min(row.len())].iter().rev().find_map(|cell| cell.as_ref()))
+                        .map(|cell| cell.sgr.clone())
+                });
+            let Some(sgr) = style else {
+                continue;
+            };
             // draw the optimistic echo plain (no underline): prediction is meant
             // to be invisible when right; the confirming frame overwrites it.
-            let _ = write!(out, "\x1b[{};{}H\x1b[0m{}\x1b[0m", wr + 1, p.col + 1, p.ch);
+            let _ = write!(out, "\x1b[{};{}H{}{}\x1b[0m", wr + 1, p.col + 1, sgr, p.ch);
             last = Some((wr, p.col));
         }
         if let Some((wr, col)) = last {
@@ -305,6 +322,8 @@ impl Predictor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grid::Cell;
+    use std::rc::Rc;
 
     fn grid_at(text: &str, cursor_col: usize) -> Grid {
         let mut g = Grid::new();
@@ -326,6 +345,40 @@ mod tests {
         assert!(p.pending.is_empty());
         p.on_input(b" -l", &g2);
         assert!(p.overlay(&g2, 20, 2).contains('l'));
+    }
+
+    #[test]
+    fn overlay_skips_cells_without_any_authoritative_style() {
+        let mut p = Predictor::new();
+        let mut g = Grid::new();
+        g.resize(20, 2);
+        g.cursor_row = 0;
+        g.cursor_col = 0;
+        p.on_input(b"x", &g);
+
+        // Painting an entirely unstyled cell with SGR 0 creates a
+        // default-background rectangle while waiting for the authoritative
+        // echo, so leave it to the real frame.
+        assert_eq!(p.overlay(&g, 20, 2), "");
+    }
+
+    #[test]
+    fn overlay_reuses_the_authoritative_cell_style() {
+        let mut p = Predictor::new();
+        let g = grid_at("$ ", 2);
+        p.on_input(b"ls", &g);
+        let mut g2 = grid_at("$ ls", 4);
+        p.on_frame(&g2);
+        g2.rows[0][4] = Some(Cell {
+            sgr: Rc::from("\x1b[48;5;4m"),
+            link: None,
+            ch: ' ',
+        });
+        p.on_input(b"x", &g2);
+
+        let overlay = p.overlay(&g2, 20, 2);
+        assert!(overlay.contains("\x1b[48;5;4mx"), "overlay lost the cell style: {overlay:?}");
+        assert!(!overlay.contains("\x1b[0mx"), "overlay reset the background before the prediction: {overlay:?}");
     }
 
     #[test]
