@@ -432,8 +432,11 @@ async fn heal_zombie_mirrors(
         //
         // Sizes live in the remote layout, which we don't have here; the wrapper
         // falls back to its default and the next converge reconciles.
-        let client_socket = crate::remote::forwarded_client_socket_path(h, state_dir);
-        let cmd_for = crate::mirror::cmd_for_pane(h, state_dir, &HashMap::new(), client_socket.as_deref());
+        // Healing runs from the daemon's host-agnostic state map and does not
+        // retain the remote server version negotiated by `connect_api`. Use
+        // the ControlMaster-backed SSH exec path here; the next normal
+        // converge will restore a shared client socket when versions match.
+        let cmd_for = crate::mirror::cmd_for_pane(h, state_dir, &HashMap::new(), None);
         for (remote_pane_id, local_pane_id) in dead {
             let argv = cmd_for(&remote_pane_id);
             crate::mirror::spawn_streamer_pane(local, state_dir, &local_pane_id, &argv, log).await;

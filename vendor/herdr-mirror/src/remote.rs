@@ -39,6 +39,10 @@ pub struct RemoteStatus {
     pub socket: String,
     pub supported: bool,
     pub reason: Option<String>,
+    /// A forwarded terminal-session socket requires matching Herdr client and
+    /// server protocol versions. Mismatched hosts use the same SSH
+    /// ControlMaster through a per-pane exec channel instead.
+    pub client_socket_compatible: bool,
 }
 
 struct SshOutput {
@@ -63,6 +67,18 @@ async fn ssh(args: &[String], timeout_ms: u64) -> SshOutput {
         Ok(Err(e)) => SshOutput { code: 1, out: String::new(), err: e.to_string() },
         Err(_) => SshOutput { code: 1, out: String::new(), err: "ssh timeout".into() },
     }
+}
+
+async fn local_herdr_version() -> Option<String> {
+    let bin = std::env::var("HERDR_BIN_PATH").unwrap_or_else(|_| "herdr".into());
+    let output = timeout(Duration::from_secs(2), Command::new(bin).arg("--version").output())
+        .await
+        .ok()?
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.split_whitespace()
+        .find(|token| token.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(str::to_string)
 }
 
 fn remove_stale_control_socket(path: &Path) -> Result<()> {
@@ -96,6 +112,7 @@ pub struct RemoteHost {
     pub fwd_sock: PathBuf,
     client_sock: PathBuf,
     forwarded: bool,
+    client_socket_compatible: bool,
     /// docker hosts only: resolved container + chosen stdio bridge
     container: Option<crate::docker::Container>,
     /// docker hosts only: owns the relay listener. Dropping it stops serving
@@ -209,6 +226,7 @@ impl RemoteHost {
             transport_hint: cfg.api_transport,
             cfg: cfg.clone(),
             forwarded: false,
+            client_socket_compatible: true,
             container: None,
             relay: None,
             exec_relay: None,
@@ -353,9 +371,17 @@ impl RemoteHost {
             .and_then(|s| s.version.clone())
             .or(parsed.client.and_then(|c| c.version))
             .unwrap_or_else(|| "unknown".into());
+        let client_socket_compatible = local_herdr_version()
+            .await
+            .is_some_and(|local| local == version);
         let running = parsed.server.as_ref().and_then(|s| s.running) == Some(true);
         let socket = parsed.server.and_then(|s| s.socket).unwrap_or_default();
-        let mut status = RemoteStatus { socket, supported: false, reason: None };
+        let mut status = RemoteStatus {
+            socket,
+            supported: false,
+            reason: None,
+            client_socket_compatible,
+        };
         if !running {
             status.reason = Some("remote herdr server is not running".into());
             return Ok(status);
@@ -444,7 +470,9 @@ impl RemoteHost {
 
     /// Local path panes should use for the remote terminal client protocol.
     pub fn client_socket_path(&self) -> Option<PathBuf> {
-        client_socket_path_for(&self.cfg, self.client_sock.clone())
+        self.client_socket_compatible
+            .then(|| client_socket_path_for(&self.cfg, self.client_sock.clone()))
+            .flatten()
     }
 
     /// Try the streamlocal `-L` forward, verified with a real ping — not just
@@ -567,15 +595,23 @@ impl RemoteHost {
         if !status.supported {
             return Err(err(status.reason.clone().unwrap_or_else(|| "remote unsupported".into())));
         }
+        self.client_socket_compatible = status.client_socket_compatible;
         // ssh hosts hand back a connected client (its ping doubles as the
         // transport probe); the docker branch resolves a path and connects below
         let container = self.container.clone();
         let sock = match &container {
             None => {
                 let api = self.connect_ssh_api(&status.socket).await?;
-                if let Err(e) = self.forward_client_socket().await {
+                if status.client_socket_compatible {
+                    if let Err(e) = self.forward_client_socket().await {
+                        self.log.log(&format!(
+                            "[{}] client socket forward unavailable ({e}) — panes use direct SSH fallback",
+                            self.cfg.name
+                        ));
+                    }
+                } else {
                     self.log.log(&format!(
-                        "[{}] client socket forward unavailable ({e}) — panes use direct SSH fallback",
+                        "[{}] local/remote Herdr versions differ — panes use direct SSH fallback",
                         self.cfg.name
                     ));
                 }
@@ -612,9 +648,8 @@ impl RemoteHost {
 }
 
 /// Return a host's forwarded client socket when it is a live-looking Unix
-/// socket.  Healing runs outside the connected `RemoteHost` borrow, so it
-/// derives the same path without opening another SSH transport.
-pub(crate) fn client_socket_path_for(cfg: &HostConfig, path: PathBuf) -> Option<PathBuf> {
+/// socket.
+fn client_socket_path_for(cfg: &HostConfig, path: PathBuf) -> Option<PathBuf> {
     if cfg.kind.is_docker() {
         return None;
     }
@@ -622,14 +657,6 @@ pub(crate) fn client_socket_path_for(cfg: &HostConfig, path: PathBuf) -> Option<
         .ok()
         .filter(|m| m.file_type().is_socket())
         .map(|_| path)
-}
-
-pub(crate) fn forwarded_client_socket_path(
-    cfg: &HostConfig,
-    state_dir: &Path,
-) -> Option<PathBuf> {
-    let stem = socket_stem(state_dir, &cfg.name);
-    client_socket_path_for(cfg, state_dir.join(format!("{stem}-client.sock")))
 }
 
 fn nonempty(e: &str, code: i32) -> String {
