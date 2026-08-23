@@ -623,7 +623,12 @@ pub async fn cmd_run(env: Env) -> Result<()> {
 
 pub fn cmd_start(env: &Env) -> Result<()> {
     // flock + parent-written pidfile: two racing starts (focus hook) must not
-    // both see "not running" and spawn duplicate daemons
+    // both see "not running" and spawn duplicate daemons. A running daemon
+    // owns a fixed host list for its lifetime; when the managed hosts.toml is
+    // changed, `start` is also the explicit configuration reload boundary.
+    // Stop that exact daemon and wait for its pidfile to disappear before
+    // spawning the replacement, otherwise start would silently leave newly
+    // added hosts unmanaged while stale mirror panes remain on screen.
     use std::os::fd::AsRawFd;
     let lock = fs::OpenOptions::new()
         .create(true)
@@ -633,9 +638,20 @@ pub fn cmd_start(env: &Env) -> Result<()> {
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(err("cannot lock daemon.lock"));
     }
-    if running_pid(env).is_some() {
-        println!("mirror daemon already running");
-        return Ok(());
+    if let Some(pid) = running_pid(env) {
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+        let mut stopped = false;
+        for _ in 0..100 {
+            if running_pid(env).is_none() {
+                stopped = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        if !stopped {
+            return Err(err(format!("mirror daemon (pid {pid}) did not stop for reload")));
+        }
+        println!("reloading mirror daemon (pid {pid})");
     }
     let exe = std::env::current_exe()?;
     let log = fs::OpenOptions::new()
