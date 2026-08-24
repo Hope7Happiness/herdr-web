@@ -26,8 +26,8 @@ use tokio::time::Instant;
 use crate::api::{ApiClient, EventStream};
 use crate::config::{load_config, HostConfig};
 use crate::mirror::{
-    apply_remote_closes, converge, mark_unknown, mirror_source, push_pane_status, regroup_sidebar,
-    teardown, AgentInfo, ConvergeDeps,
+    apply_remote_closes, converge, mirror_source, push_pane_status, regroup_sidebar, teardown,
+    AgentInfo, ConvergeDeps,
 };
 use crate::state::{load_state, save_state, HostState};
 use crate::util::{err, now_iso, pid_alive, sleep_until_earliest, Env, Logger, Result};
@@ -318,8 +318,7 @@ async fn host_task(ctx: HostCtx, mut poke: mpsc::Receiver<()>) {
             Ok(()) => unreachable!("run_connected only returns on error"),
             Err(e) => e,
         };
-        mark_unknown(&ctx.local, &ctx.env_state_dir, &ctx.host.name, "mirror: connection lost")
-            .await;
+        suspend_mirrors(&ctx, &e.to_string()).await;
         // starts_with, not contains: the marker is always emitted as a prefix,
         // while the error text can embed user strings (target, remote_bin). A
         // substring test would make an ssh host named `dormant-box` back off
@@ -345,6 +344,42 @@ async fn host_task(ctx: HostCtx, mut poke: mpsc::Receiver<()>) {
         tokio::time::sleep(Duration::from_secs(delay)).await;
         // drain stale pokes accumulated while down (reconnect converges anyway)
         while poke.try_recv().is_ok() {}
+    }
+}
+
+/// Hide a host's local mirror workspaces while its transport is down. Keeping
+/// the mapping in a suspended HostState lets the next successful snapshot
+/// recreate the local projection without confusing the close event with a
+/// user's deliberate mirror close, and avoids rendering a stale "not
+/// connected" pane in the local Herdr sidebar.
+async fn suspend_mirrors(ctx: &HostCtx, reason: &str) {
+    let mut state = load_state(&ctx.env_state_dir, &ctx.host.name);
+    if state.suspended {
+        return;
+    }
+    state.suspended = true;
+    let local_workspaces: Vec<String> = state
+        .workspaces
+        .values()
+        .filter(|entry| !entry.is_tombstoned())
+        .map(|entry| entry.local_id.clone())
+        .collect();
+    if let Err(e) = save_state(&ctx.env_state_dir, &ctx.host.name, &state) {
+        ctx.log.log(&format!("[{}] suspended state save failed: {e}", ctx.host.name));
+    }
+    ctx.log.log(&format!(
+        "[{}] hiding {} mirror workspace(s) while disconnected ({reason})",
+        ctx.host.name,
+        local_workspaces.len()
+    ));
+    for workspace_id in local_workspaces {
+        if let Ok(mut tracker) = ctx.closes.lock() {
+            tracker.mark_self_close(&workspace_id);
+        }
+        let _ = ctx
+            .local
+            .request("workspace.close", json!({ "workspace_id": workspace_id }))
+            .await;
     }
 }
 

@@ -86,6 +86,11 @@ pub struct HostState {
     /// permanent winner and revert the other side's drag.
     #[serde(default)]
     pub ratios: BTreeMap<String, f64>,
+    /// The remote transport is down and its local mirror workspaces are
+    /// temporarily hidden. Unlike a tombstone, this is cleared on the first
+    /// successful snapshot and the workspaces are rebuilt from the remote.
+    #[serde(default)]
+    pub suspended: bool,
 }
 
 pub fn state_path(state_dir: &Path, host: &str) -> PathBuf {

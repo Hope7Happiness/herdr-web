@@ -656,6 +656,11 @@ pub async fn converge(deps: &ConvergeDeps) -> Result<HostState> {
 async fn converge_inner(deps: &ConvergeDeps, state: &mut HostState) -> Result<()> {
     let host = &deps.host;
     let log = &deps.log;
+    // Keep this set while reconciling the first successful snapshot after a
+    // transport outage. The local mirror workspaces were deliberately closed
+    // while suspended; treating their absence as a user close would tombstone
+    // them before the normal recreate path gets a chance to run.
+    let was_suspended = state.suspended;
     let (remote_snap, local_snap) =
         tokio::try_join!(fetch_snapshot(&deps.remote), fetch_snapshot(&deps.local))?;
 
@@ -701,7 +706,7 @@ async fn converge_inner(deps: &ConvergeDeps, state: &mut HostState) -> Result<()
     };
     let mut ws_close_remote: Vec<String> = Vec::new();
     for (rid, entry) in state.workspaces.iter_mut() {
-        if !entry.is_tombstoned() && !local_ws_ids.contains(&entry.local_id) && remote_ws_ids.contains(rid.as_str()) {
+        if !was_suspended && !entry.is_tombstoned() && !local_ws_ids.contains(&entry.local_id) && remote_ws_ids.contains(rid.as_str()) {
             entry.tombstone = Some(true);
             if close_remote && user_closed.contains(&entry.local_id) {
                 ws_close_remote.push(rid.clone());
@@ -721,7 +726,7 @@ async fn converge_inner(deps: &ConvergeDeps, state: &mut HostState) -> Result<()
     let mut drop_panes: Vec<String> = Vec::new();
     let mut pane_close_remote: Vec<String> = Vec::new();
     for (rid, entry) in state.panes.iter_mut() {
-        if !entry.is_tombstoned() && !local_pane_ids.contains(entry.local_id.as_str()) && remote_pane_ids.contains(rid.as_str()) {
+        if !was_suspended && !entry.is_tombstoned() && !local_pane_ids.contains(entry.local_id.as_str()) && remote_pane_ids.contains(rid.as_str()) {
             let ws_entry = pane_ws.get(rid.as_str()).and_then(|ws| state.workspaces.get(*ws));
             // if the pane's whole mirror workspace is gone, the stale pane
             // entry is collateral — drop it (its tombstoned workspace already
@@ -1215,6 +1220,9 @@ async fn converge_inner(deps: &ConvergeDeps, state: &mut HostState) -> Result<()
 
     // 5. push authoritative agent status onto mirror panes
     push_statuses(deps, &remote_snap, state).await;
+    // A successful pass has rebuilt any temporarily hidden local workspaces
+    // that still exist remotely. Future local closes are user intent again.
+    state.suspended = false;
     Ok(())
 }
 
@@ -1366,36 +1374,6 @@ pub async fn push_statuses(deps: &ConvergeDeps, remote_snap: &Snapshot, state: &
         let agent = agent_by_pane.get(remote_id.as_str()).copied();
         push_pane_status(&deps.local, &deps.host.name, remote_id, entry, agent, &deps.log).await;
     }
-}
-
-/// Mark mirrored agents unknown (ssh drop) — statuses recover on reconnect.
-/// Only panes we actually reported an agent onto; inventing agent rows for
-/// plain mirrored terminals pollutes the agents panel.
-pub async fn mark_unknown(local: &ApiClient, state_dir: &std::path::Path, host_name: &str, reason: &str) {
-    let mut state = load_state(state_dir, host_name);
-    let source = mirror_source(host_name);
-    let custom = clamp_status(reason);
-    for entry in state.panes.values_mut() {
-        let Some(reported) = entry.reported.clone() else { continue };
-        if entry.is_tombstoned() {
-            continue;
-        }
-        entry.seq += 1;
-        let _ = local
-            .request(
-                "pane.report_agent",
-                json!({
-                    "pane_id": entry.local_id,
-                    "source": source,
-                    "agent": reported,
-                    "state": "unknown",
-                    "custom_status": custom,
-                    "seq": entry.seq,
-                }),
-            )
-            .await;
-    }
-    let _ = save_state(state_dir, host_name, &state);
 }
 
 /// Graceful teardown: close every mirror workspace this host created.
