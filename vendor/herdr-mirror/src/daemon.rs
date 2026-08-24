@@ -353,7 +353,26 @@ async fn host_task(ctx: HostCtx, mut poke: mpsc::Receiver<()>) {
 /// user's deliberate mirror close, and avoids rendering a stale "not
 /// connected" pane in the local Herdr sidebar.
 async fn suspend_mirrors(ctx: &HostCtx, reason: &str) {
-    let mut state = load_state(&ctx.env_state_dir, &ctx.host.name);
+    suspend_host_workspaces(
+        &ctx.local,
+        &ctx.env_state_dir,
+        &ctx.host.name,
+        &ctx.closes,
+        &ctx.log,
+        reason,
+    )
+    .await;
+}
+
+async fn suspend_host_workspaces(
+    local: &ApiClient,
+    state_dir: &std::path::Path,
+    host_name: &str,
+    closes: &crate::closes::Closes,
+    log: &Logger,
+    reason: &str,
+) {
+    let mut state = load_state(state_dir, host_name);
     if state.suspended {
         return;
     }
@@ -364,20 +383,18 @@ async fn suspend_mirrors(ctx: &HostCtx, reason: &str) {
         .filter(|entry| !entry.is_tombstoned())
         .map(|entry| entry.local_id.clone())
         .collect();
-    if let Err(e) = save_state(&ctx.env_state_dir, &ctx.host.name, &state) {
-        ctx.log.log(&format!("[{}] suspended state save failed: {e}", ctx.host.name));
+    if let Err(e) = save_state(state_dir, host_name, &state) {
+        log.log(&format!("[{host_name}] suspended state save failed: {e}"));
     }
-    ctx.log.log(&format!(
-        "[{}] hiding {} mirror workspace(s) while disconnected ({reason})",
-        ctx.host.name,
+    log.log(&format!(
+        "[{host_name}] hiding {} mirror workspace(s) while disconnected ({reason})",
         local_workspaces.len()
     ));
     for workspace_id in local_workspaces {
-        if let Ok(mut tracker) = ctx.closes.lock() {
+        if let Ok(mut tracker) = closes.lock() {
             tracker.mark_self_close(&workspace_id);
         }
-        let _ = ctx
-            .local
+        let _ = local
             .request("workspace.close", json!({ "workspace_id": workspace_id }))
             .await;
     }
@@ -394,11 +411,18 @@ async fn suspend_mirrors(ctx: &HostCtx, reason: &str) {
 ///
 /// Generation-agnostic by construction — every streamer ever shipped is
 /// `herdr-mirror pane …`, whatever flags follow.
-async fn has_live_streamer(local: &ApiClient, pane_id: &str) -> Option<bool> {
+async fn has_live_streamer(local: &ApiClient, pane_id: &str, expected_exe: Option<&str>) -> Option<bool> {
     let v = local.request("pane.process_info", json!({ "pane_id": pane_id })).await.ok()?;
     let procs = v.pointer("/process_info/foreground_processes")?.as_array()?;
     Some(procs.iter().any(|p| {
-        p.get("argv").and_then(|a| a.as_array()).is_some_and(|argv| is_streamer_argv(argv))
+        p.get("argv").and_then(|a| a.as_array()).is_some_and(|argv| {
+            is_streamer_argv(argv)
+                && expected_exe.is_none_or(|expected| {
+                    argv.first()
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|actual| streamer_exe_matches(actual, expected))
+                })
+        })
     }))
 }
 
@@ -413,6 +437,19 @@ fn is_streamer_argv(argv: &[Value]) -> bool {
         && argv.get(1).and_then(|s| s.as_str()) == Some("pane")
 }
 
+/// Compare streamer executables by their on-disk identity. The daemon is
+/// normally launched through `~/.local/bin/herdr-mirror`, which is a symlink;
+/// macOS may report that symlink in the child argv while `current_exe()`
+/// returns the resolved install target. Treating those spellings as different
+/// makes every daemon restart look like an old streamer and needlessly closes
+/// the whole mirror projection.
+fn streamer_exe_matches(argv_exe: &str, expected_exe: &str) -> bool {
+    if argv_exe == expected_exe {
+        return true;
+    }
+    std::fs::canonicalize(argv_exe).ok() == std::fs::canonicalize(expected_exe).ok()
+}
+
 /// After a local herdr server restart, session-restore resurrects mirror panes
 /// as plain shells: their ids match the map, but no streamer processes exist —
 /// and converge can't tell (the snapshot has no process info), so the mirrors
@@ -425,7 +462,14 @@ async fn heal_zombie_mirrors(
     hosts: &[HostConfig],
     pokers: &[mpsc::Sender<()>],
     log: &Logger,
+    closes: &crate::closes::Closes,
 ) {
+    // A daemon restart or plugin upgrade can leave a streamer from an older
+    // install alive in the pane. It may keep a process entry while its remote
+    // terminal session is already closed, so process presence alone is not a
+    // health check. Re-exec anything whose argv[0] is not this daemon binary.
+    let expected_exe = std::env::current_exe().ok();
+    let expected_exe = expected_exe.as_deref().and_then(|p| p.to_str());
     for (i, h) in hosts.iter().enumerate() {
         let state = load_state(state_dir, &h.name);
         let panes: Vec<(String, String)> = state
@@ -445,12 +489,32 @@ async fn heal_zombie_mirrors(
         // exec'ing into a pane whose streamer owns stdin writes the command
         // line into the user's live remote session instead.
         let mut dead: Vec<(String, String)> = Vec::new();
+        let mut stale_streamer = false;
         for (remote_pane_id, local_pane_id) in panes {
-            if has_live_streamer(local, &local_pane_id).await == Some(false) {
+            if has_live_streamer(local, &local_pane_id, expected_exe).await == Some(false) {
+                if has_live_streamer(local, &local_pane_id, None).await == Some(true) {
+                    stale_streamer = true;
+                }
                 dead.push((remote_pane_id, local_pane_id));
             }
         }
         if dead.is_empty() {
+            continue;
+        }
+        if stale_streamer {
+            // A stale streamer still owns stdin. Never type a replacement exec
+            // into it: hide the whole host projection, which closes those
+            // processes, then let the next converge recreate clean panes.
+            suspend_host_workspaces(
+                local,
+                state_dir,
+                &h.name,
+                closes,
+                log,
+                "stale streamer binary",
+            )
+            .await;
+            let _ = pokers[i].try_send(());
             continue;
         }
         log.log(&format!(
@@ -512,7 +576,7 @@ async fn local_events_task(
                 // subscribe succeeding after a drop = the server is back up;
                 // give session-restore a beat, then sweep for zombie mirrors
                 tokio::time::sleep(Duration::from_secs(3)).await;
-                heal_zombie_mirrors(&local, &state_dir, &hosts, &pokers, &log).await;
+                heal_zombie_mirrors(&local, &state_dir, &hosts, &pokers, &log, &closes).await;
                 while let Some(e) = stream.next().await {
                     // A close EVENT is the authoritative "the user closed this";
                     // snapshot absence is not (rebuild/restart/failed converge).
@@ -962,5 +1026,20 @@ mod tests {
     fn other_subcommands_are_not_streamers() {
         assert!(!is_streamer_argv(&argv(&["/usr/local/bin/herdr-mirror", "status"])));
         assert!(!is_streamer_argv(&argv(&["/usr/local/bin/herdr-mirror"])));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streamer_executable_symlink_matches_resolved_target() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("herdr-mirror-exe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("target");
+        let link = root.join("link");
+        std::fs::write(&target, b"binary").unwrap();
+        symlink(&target, &link).unwrap();
+        assert!(streamer_exe_matches(link.to_str().unwrap(), target.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(root);
     }
 }
