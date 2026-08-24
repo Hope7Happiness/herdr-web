@@ -213,12 +213,17 @@ fn spawn_session(args: &Args, mode: Mode, cols: usize, rows: usize, gen: u64, tx
     // `sh -c` resolver that takes the trailing words as "$@" (see
     // config::remote_bin_expr).
     let bin = crate::config::remote_bin_expr(args.remote_bin.as_deref());
+    // Observe owns the passive attachment. A control session must explicitly
+    // replace that attachment, otherwise Herdr rejects takeover with
+    // "already has an attached client; retry with --takeover".
+    let takeover_flag = (mode == Mode::Control).then_some(" --takeover").unwrap_or("");
     let cmd = format!(
-        "exec {}{} terminal session {} {} --cols {} --rows {}",
+        "exec {}{} terminal session {} {}{} --cols {} --rows {}",
         bin,
         session_flag,
         mode.as_str(),
         sh_quote(&args.pane_target),
+        takeover_flag,
         cols,
         rows
     );
@@ -230,6 +235,7 @@ fn spawn_session(args: &Args, mode: Mode, cols: usize, rows: usize, gen: u64, tx
             let mut c = tokio::process::Command::new(bin);
             c.args(["terminal", "session", mode.as_str()])
                 .arg(&args.pane_target)
+                .args(if mode == Mode::Control { vec!["--takeover"] } else { Vec::new() })
                 .args(["--cols", &cols.to_string(), "--rows", &rows.to_string()])
                 .env("HERDR_CLIENT_SOCKET_PATH", client_socket)
                 // A pane inherits the local Herdr API socket. Terminal session
