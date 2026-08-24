@@ -103,7 +103,12 @@ async function writeCommand(group, subcommand, args) {
     process.stdout.write(`${JSON.stringify(current.envelope)}\n`);
     return;
   }
-  const actualGroup = group === 'agent' && current.source === 'pane' ? 'pane' : group;
+  // Mirror agent records are projections owned by the streamer, not named
+  // local agents. Herdr's agent send-keys path therefore rejects a valid
+  // mirror pane as "not an active named agent"; route control input through
+  // the pane surface, which also performs the takeover handshake.
+  const actualGroup = group === 'agent' &&
+    (current.source === 'pane' || subcommand === 'send-keys') ? 'pane' : group;
   const result = await run(HERDR_BIN, [actualGroup, subcommand, pane, ...args.slice(1)]);
   if (result.stdout) process.stdout.write(result.stdout);
 }
