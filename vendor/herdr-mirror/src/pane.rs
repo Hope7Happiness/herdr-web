@@ -557,6 +557,61 @@ fn same_grid_content(a: &Grid, b: &Grid) -> bool {
     a.width == b.width && a.height == b.height && a.text_lines() == b.text_lines()
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ScrollState {
+    /// Wheel steps away from the live tail. This is deliberately expressed in
+    /// events rather than rows: every semantic scroll request moves three rows,
+    /// and the inverse event is the only reliable protocol signal that the
+    /// client is returning to live output.
+    depth: usize,
+    /// Most recent wheel direction: true means toward older history. Frame
+    /// arrival is not ordered tightly enough to accept "the next frame"; only
+    /// a content shift in this direction is a scroll response.
+    direction_up: Option<bool>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ScrollFrame {
+    Live,
+    Requested,
+    Hold,
+}
+
+impl ScrollState {
+    fn wheel(&mut self, up: bool) {
+        if up {
+            self.depth = self.depth.saturating_add(1);
+            self.direction_up = Some(true);
+        } else {
+            self.depth = self.depth.saturating_sub(1);
+            if self.depth == 0 {
+                self.direction_up = None;
+            } else {
+                self.direction_up = Some(false);
+            }
+        }
+    }
+
+    fn frame(&self, shifted_down: bool, shifted_up: bool) -> ScrollFrame {
+        if self.depth == 0 {
+            return ScrollFrame::Live;
+        }
+        match self.direction_up {
+            Some(true) if shifted_down => ScrollFrame::Requested,
+            Some(false) if shifted_up => ScrollFrame::Requested,
+            _ => ScrollFrame::Hold,
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn is_live(&self) -> bool {
+        self.depth == 0
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 // the wrapper state machine
@@ -598,9 +653,9 @@ struct App {
     /// size: Herdr can apply the real PTY dimensions a few seconds after the
     /// streamer is spawned, with no second SIGWINCH delivered to the child.
     observe_resize_at: Option<Instant>,
-    /// Passive viewport-shift suppression is disabled briefly after explicit
-    /// input/scroll, when a downward shift is user-requested rather than noise.
-    allow_viewport_shift_until: Option<Instant>,
+    /// Holds an explicitly scrolled historical viewport stable while ordinary
+    /// remote refreshes continue advancing the protocol baseline behind it.
+    scroll: ScrollState,
     /// Large-frame confirmation is an idle-flicker filter. Bypass it briefly
     /// after arrows, Enter, Escape, function keys, or clicks so interactive TUI
     /// transitions are never held waiting for a duplicate frame.
@@ -759,6 +814,12 @@ impl App {
     async fn connect(&mut self, m: Mode) {
         self.mode = m;
         self.pending_frame = None;
+        // A wheel event received in observe mode is queued across the takeover
+        // gap; preserve its hold state until that queued request gets a frame.
+        // Ordinary reconnects start at the live tail.
+        if self.pending_control.is_empty() {
+            self.scroll.reset();
+        }
         // re-earn prediction confidence against the new session's frames
         self.predict = Predictor::new();
         let (cols, rows) = match m {
@@ -855,10 +916,21 @@ impl App {
         if let Ok(decoded) = B64.decode(bytes) {
             self.wire_grid.apply(&String::from_utf8_lossy(&decoded));
             let now = Instant::now();
-            let allow_shift = self.allow_viewport_shift_until.is_some_and(|until| until > now);
+            let shifted_down = dominant_downward_shift(&self.grid, &self.wire_grid).is_some();
+            let shifted_up = dominant_downward_shift(&self.wire_grid, &self.grid).is_some();
+            let scroll_frame = self.scroll.frame(shifted_down, shifted_up);
+            if scroll_frame == ScrollFrame::Hold {
+                // Keep the historical viewport on screen. The wire grid still
+                // consumes every delta so returning to live never reconstructs
+                // against a stale protocol baseline.
+                self.pending_frame = None;
+                return;
+            }
             let allow_interactive =
                 self.allow_interactive_frames_until.is_some_and(|until| until > now);
-            let authoritative = frame.full == Some(true) || allow_shift || allow_interactive;
+            let authoritative = frame.full == Some(true)
+                || scroll_frame == ScrollFrame::Requested
+                || allow_interactive;
             if !authoritative && dominant_downward_shift(&self.grid, &self.wire_grid).is_some() {
                 self.pending_frame = None;
                 return;
@@ -866,7 +938,8 @@ impl App {
             // Control frames can exhibit the same transient viewport swap while
             // a remote TUI redraws in response to typing. Keep the one-frame
             // confirmation rule in both modes; full frames and explicit
-            // navigation/scroll remain authoritative and immediate.
+            // navigation and requested scroll responses remain authoritative
+            // and immediate.
             if authoritative {
                 self.pending_frame = None;
                 self.grid = self.wire_grid.clone();
@@ -957,7 +1030,7 @@ impl App {
                     if let Some((btn, x, y, press, len)) = parse_mouse(&buf, i) {
                         if press && (btn == 64 || btn == 65) {
                             self.pending_control.push(scroll_message(btn == 64, x, y));
-                            self.allow_viewport_shift_until = Some(Instant::now() + Duration::from_secs(2));
+                            self.scroll.wheel(btn == 64);
                             self.pending_frame = None;
                         }
                         i += len;
@@ -1014,7 +1087,7 @@ impl App {
                 match mouse_action(self.remote_is_shell, btn, press) {
                     MouseAction::Scroll { up } => {
                         scrolls.push(scroll_message(up, x, y));
-                        self.allow_viewport_shift_until = Some(Instant::now() + Duration::from_secs(2));
+                        self.scroll.wheel(up);
                         self.pending_frame = None;
                     }
                     MouseAction::ForwardRaw => rest.extend_from_slice(&buf[i..i + len]),
@@ -1026,10 +1099,30 @@ impl App {
                 i += 1;
             }
         }
+        let had_scroll = !scrolls.is_empty();
         for s in scrolls {
             self.send(s).await;
         }
+        if had_scroll && self.scroll.is_live() {
+            // The remote client often snaps its own viewport to live during a
+            // refresh and then emits no frame for the final downward wheel
+            // event. `wire_grid` kept consuming those refreshes while the
+            // historical grid was held, so returning to it is immediate and
+            // does not depend on another protocol response. Keep the short
+            // authoritative window open too: if the down-scroll response does
+            // arrive, it is a large change back to live and must not be held by
+            // the idle-flicker two-frame debounce.
+            self.allow_interactive_frames_until =
+                Some(Instant::now() + INTERACTIVE_FRAME_WINDOW);
+            self.pending_frame = None;
+            self.grid = self.wire_grid.clone();
+            self.predict.on_frame(&self.grid);
+            self.paint();
+        }
         if !rest.is_empty() {
+            // Any keyboard/click interaction targets the live application, so
+            // release a historical hold before waiting for its response.
+            self.scroll.reset();
             if drives_interactive_redraw(&rest) {
                 self.allow_interactive_frames_until =
                     Some(Instant::now() + INTERACTIVE_FRAME_WINDOW);
@@ -1125,7 +1218,7 @@ pub async fn run(args: Args) -> Result<()> {
         last_input: Instant::now(),
         hint_clear_at: None,
         observe_resize_at: None,
-        allow_viewport_shift_until: None,
+        scroll: ScrollState::default(),
         allow_interactive_frames_until: None,
         pending_frame: None,
         predict: Predictor::new(),
@@ -1205,6 +1298,10 @@ pub async fn run(args: Args) -> Result<()> {
             }
             _ = sigwinch.recv() => {
                 app.renderer.invalidate();
+                // A different viewport geometry invalidates the held historical
+                // grid. Resume live output and let the resized frame establish
+                // the new baseline.
+                app.scroll.reset();
                 // a resize means a client is laying this pane out, so the size is
                 // now a real viewport: take control if that is what we're for.
                 // control_sticky means control was refused twice in a row and we
@@ -1357,6 +1454,39 @@ mod tests {
         assert!(drives_interactive_redraw(b"\r"));
         assert!(drives_interactive_redraw(b"\x1b[A"));
         assert!(drives_interactive_redraw(b"\x1b[<0;10;5M"));
+    }
+
+    #[test]
+    fn scroll_holds_refreshes_after_the_requested_frame() {
+        let mut scroll = ScrollState::default();
+        assert_eq!(scroll.frame(false, false), ScrollFrame::Live);
+
+        scroll.wheel(true);
+        assert_eq!(scroll.frame(false, false), ScrollFrame::Hold);
+        assert_eq!(scroll.frame(true, false), ScrollFrame::Requested);
+        assert_eq!(scroll.frame(false, true), ScrollFrame::Hold);
+
+        scroll.wheel(false);
+        assert_eq!(scroll.frame(false, false), ScrollFrame::Live);
+    }
+
+    #[test]
+    fn scroll_bursts_admit_only_frames_moving_in_the_requested_direction() {
+        let mut scroll = ScrollState::default();
+        scroll.wheel(true);
+        scroll.wheel(true);
+        scroll.wheel(true);
+        assert_eq!(scroll.depth, 3);
+        assert_eq!(scroll.frame(true, false), ScrollFrame::Requested);
+        assert_eq!(scroll.frame(true, false), ScrollFrame::Requested);
+        assert_eq!(scroll.frame(false, true), ScrollFrame::Hold);
+
+        scroll.wheel(false);
+        assert_eq!(scroll.frame(true, false), ScrollFrame::Hold);
+        assert_eq!(scroll.frame(false, true), ScrollFrame::Requested);
+
+        scroll.reset();
+        assert_eq!(scroll.frame(false, false), ScrollFrame::Live);
     }
 
     #[test]
