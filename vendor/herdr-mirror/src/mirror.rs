@@ -434,7 +434,7 @@ async fn reconcile_tab_geometry(
     remote_tab: &str,
     local_tab: &str,
     remote_panes: &[&PaneInfo],
-) {
+) -> Option<LayoutNode> {
     #[derive(Deserialize)]
     struct Exported {
         layout: ExportedLayout,
@@ -447,7 +447,7 @@ async fn reconcile_tab_geometry(
         deps.remote.request_t::<Exported>("layout.export", json!({ "tab_id": remote_tab })).await;
     let local_layout =
         deps.local.request_t::<Exported>("layout.export", json!({ "tab_id": local_tab })).await;
-    let (Ok(remote), Ok(local)) = (remote_layout, local_layout) else { return };
+    let (Ok(remote), Ok(local)) = (remote_layout, local_layout) else { return None };
 
     let map: BTreeMap<String, String> = remote_panes
         .iter()
@@ -482,7 +482,7 @@ async fn reconcile_tab_geometry(
             log_geometry_drift(&deps.log, remote_tab);
         }
         state.ratios.retain(|k, _| !k.starts_with(&prefix));
-        return;
+        return Some(remote.layout.root);
     }
 
     // swaps first: a ratio describes a position, so it only means the right
@@ -494,7 +494,7 @@ async fn reconcile_tab_geometry(
             .await
         {
             deps.log.log(&format!("{remote_tab}: pane swap failed ({e}) — retrying next pass"));
-            return;
+            return None;
         }
     }
 
@@ -519,12 +519,129 @@ async fn reconcile_tab_geometry(
         }
         state.ratios.insert(format!("{prefix}{path}"), ratio);
     }
+    None
 }
 
 fn log_geometry_drift(log: &Logger, remote_tab: &str) {
     log.log(&format!(
         "{remote_tab}: mirror no longer matches the remote's split shape — sizes won't track until it does"
     ));
+}
+
+/// Replace every pane mapping owned by one local tab with the panes returned by
+/// `layout.apply`. Remote panes that moved in from another tab are overwritten
+/// too; their former local pane is removed when that source tab is rebuilt.
+fn replace_tab_pane_mappings(
+    state: &mut HostState,
+    old_local_ids: &HashSet<String>,
+    remote_order: &[String],
+    local_order: &[String],
+) -> Vec<(String, String)> {
+    let old_seq: HashMap<String, u64> = remote_order
+        .iter()
+        .filter_map(|rid| state.panes.get(rid).map(|entry| (rid.clone(), entry.seq)))
+        .collect();
+    let remote_ids: HashSet<&str> = remote_order.iter().map(String::as_str).collect();
+    state.panes.retain(|rid, entry| {
+        !old_local_ids.contains(&entry.local_id) && !remote_ids.contains(rid.as_str())
+    });
+
+    let mut replacements = Vec::new();
+    for (rid, local_id) in remote_order.iter().zip(local_order) {
+        state.panes.insert(
+            rid.clone(),
+            PaneEntry {
+                local_id: local_id.clone(),
+                tombstone: None,
+                seq: old_seq.get(rid).copied().unwrap_or(0),
+                // The old report belonged to a pane `layout.apply` replaced.
+                // Force the normal status pass to publish it onto the new pane.
+                reported: None,
+            },
+        );
+        replacements.push((rid.clone(), local_id.clone()));
+    }
+    replacements
+}
+
+/// `pane.move` cannot re-parent a pane inside its own tab, so once a remote
+/// move changes split direction/nesting the only exact local operation is to
+/// apply that tab's complete tree again. This replaces only local streamer
+/// panes; the remote terminal processes remain attached to the same pane ids.
+async fn rebuild_tab_projection<F>(
+    deps: &ConvergeDeps,
+    state: &mut HostState,
+    remote_tab: &str,
+    local_tab: &str,
+    tab_label: &str,
+    remote_root: &LayoutNode,
+    old_local_ids: &[String],
+    cmd_for: &F,
+) -> Result<()>
+where
+    F: Fn(&str) -> Vec<String>,
+{
+    let Some(live_root) = prune_closed(remote_root, &state.panes) else { return Ok(()) };
+    let mut remote_order = Vec::new();
+    walk_pane_ids(&live_root, &mut remote_order);
+    if remote_order.is_empty() {
+        return Ok(());
+    }
+
+    for local_id in old_local_ids {
+        mark_self_close(deps, local_id);
+    }
+    let cwd = mirror_pane_cwd(&deps.state_dir).display().to_string();
+    let params = json!({
+        "tab_id": local_tab,
+        "tab_label": tab_label,
+        "root": map_node(&live_root, &cwd),
+        "focus": false,
+    });
+    #[derive(Deserialize)]
+    struct Applied {
+        layout: AppliedLayout,
+    }
+    #[derive(Deserialize)]
+    struct AppliedLayout {
+        tab_id: String,
+        root: LayoutNode,
+    }
+    let applied: Applied = deps.local.request_t("layout.apply", params).await?;
+    let mut local_order = Vec::new();
+    walk_pane_ids(&applied.layout.root, &mut local_order);
+    if local_order.len() != remote_order.len() {
+        return Err(crate::util::err(format!(
+            "{remote_tab}: rebuilt layout returned {} panes for {} remote panes",
+            local_order.len(),
+            remote_order.len()
+        )));
+    }
+
+    let old_local_ids: HashSet<String> = old_local_ids.iter().cloned().collect();
+    let replacements =
+        replace_tab_pane_mappings(state, &old_local_ids, &remote_order, &local_order);
+    if let Some(tab) = state.tabs.get_mut(remote_tab) {
+        tab.local_id = applied.layout.tab_id;
+        tab.last_remote_label = Some(tab_label.to_string());
+    }
+    let prefix = format!("{remote_tab}|");
+    state.ratios.retain(|key, _| !key.starts_with(&prefix));
+    deps.log.log(&format!(
+        "{remote_tab}: remote split structure changed — rebuilt {} local mirror pane(s)",
+        replacements.len()
+    ));
+    for (remote_id, local_id) in replacements {
+        spawn_streamer_pane(
+            &deps.local,
+            &deps.state_dir,
+            &local_id,
+            &cmd_for(&remote_id),
+            &deps.log,
+        )
+        .await;
+    }
+    Ok(())
 }
 
 /// Split `target` and return the new local pane id. `ratio` is the remote
@@ -1204,11 +1321,58 @@ async fn converge_inner(deps: &ConvergeDeps, state: &mut HostState) -> Result<()
             // both sides (see daemon.rs), and each converge diffs the two
             // exports and moves whichever side didn't change.
             //
-            // A tab with fewer than two panes has no split to reconcile, which
-            // is most tabs, so it costs nothing there.
-            if remote_panes_in_tab.len() > 1 {
-                reconcile_tab_geometry(deps, state, &rtab.tab_id, tab_local, &remote_panes_in_tab)
-                    .await;
+            // A one-pane remote normally has no split to reconcile. Still
+            // export when its local tab has extra panes: that is precisely the
+            // orphan left by a remote pane moving to another tab between two
+            // snapshots, and it must collapse back to the one-pane shape.
+            let local_pane_count = local_snap
+                .panes
+                .iter()
+                .filter(|pane| pane.tab_id == *tab_local)
+                .count();
+            let pane_mapped_to_other_tab = remote_panes_in_tab.iter().any(|remote_pane| {
+                state
+                    .panes
+                    .get(&remote_pane.pane_id)
+                    .and_then(|entry| {
+                        local_snap
+                            .panes
+                            .iter()
+                            .find(|pane| pane.pane_id == entry.local_id)
+                    })
+                    .is_some_and(|pane| pane.tab_id != *tab_local)
+            });
+            if remote_panes_in_tab.len() > 1
+                || local_pane_count > 1
+                || pane_mapped_to_other_tab
+            {
+                if let Some(remote_root) = reconcile_tab_geometry(
+                    deps,
+                    state,
+                    &rtab.tab_id,
+                    tab_local,
+                    &remote_panes_in_tab,
+                )
+                .await
+                {
+                    let old_local_ids: Vec<String> = local_snap
+                        .panes
+                        .iter()
+                        .filter(|pane| pane.tab_id == *tab_local)
+                        .map(|pane| pane.pane_id.clone())
+                        .collect();
+                    rebuild_tab_projection(
+                        deps,
+                        state,
+                        &rtab.tab_id,
+                        tab_local,
+                        &rtab.label,
+                        &remote_root,
+                        &old_local_ids,
+                        &cmd_for,
+                    )
+                    .await?;
+                }
             }
         }
     }
@@ -1574,6 +1738,61 @@ mod tests {
         panes.insert("p1".into(), tombstoned("l1"));
         panes.insert("p3".into(), tombstoned("l3"));
         assert!(prune_closed(&tree, &panes).is_none());
+    }
+
+    #[test]
+    fn rebuilt_tab_replaces_stale_and_cross_tab_pane_mappings() {
+        let mut state = HostState::default();
+        state.panes.insert(
+            "p1".into(),
+            PaneEntry {
+                local_id: "old-tab:p1".into(),
+                tombstone: None,
+                seq: 7,
+                reported: Some("codex".into()),
+            },
+        );
+        // An orphan mapping in the tab being rebuilt must disappear even when
+        // its remote pane is no longer in that tab.
+        state.panes.insert(
+            "gone".into(),
+            PaneEntry {
+                local_id: "old-tab:p2".into(),
+                tombstone: None,
+                seq: 3,
+                reported: None,
+            },
+        );
+        // p2 is moving in from another tab; rebuilding must overwrite its old
+        // local placement and force status metadata onto the new pane.
+        state.panes.insert(
+            "p2".into(),
+            PaneEntry {
+                local_id: "other-tab:p9".into(),
+                tombstone: None,
+                seq: 11,
+                reported: Some("codex".into()),
+            },
+        );
+        let old = HashSet::from(["old-tab:p1".to_string(), "old-tab:p2".to_string()]);
+        let replacements = replace_tab_pane_mappings(
+            &mut state,
+            &old,
+            &["p1".into(), "p2".into()],
+            &["new:p1".into(), "new:p2".into()],
+        );
+
+        assert_eq!(
+            replacements,
+            vec![("p1".into(), "new:p1".into()), ("p2".into(), "new:p2".into())]
+        );
+        assert!(!state.panes.contains_key("gone"));
+        assert_eq!(state.panes["p1"].local_id, "new:p1");
+        assert_eq!(state.panes["p1"].seq, 7);
+        assert_eq!(state.panes["p2"].local_id, "new:p2");
+        assert_eq!(state.panes["p2"].seq, 11);
+        assert!(state.panes["p1"].reported.is_none());
+        assert!(state.panes["p2"].reported.is_none());
     }
 
     /// Characterization test: the ssh pane argv is a cross-process contract.
