@@ -226,6 +226,7 @@ pub struct Renderer {
     painted_once: bool,
     last_offset_r: Option<usize>,
     last_size: Option<(usize, usize)>,
+    last_cursor_position: Option<(usize, usize)>,
 }
 
 impl Renderer {
@@ -239,6 +240,7 @@ impl Renderer {
         self.painted_once = false;
         self.last_offset_r = None;
         self.last_size = None;
+        self.last_cursor_position = None;
     }
 
     pub fn status(&mut self, text: &str) {
@@ -362,11 +364,14 @@ impl Renderer {
                 changed = true;
             }
         }
-        if !changed && self.painted_once {
-            // Cursor-only frames are common while a TUI blinks or moves its
-            // insertion point. Do not emit CUP/cursor control for them: the
-            // local cursor is cosmetic, while these writes can flash a line on
-            // terminals that do not fully hide synchronized output.
+        if !changed
+            && self.painted_once
+            && next_cursor_position == self.last_cursor_position
+        {
+            // Suppress cursor blink frames, but not actual cursor movement.
+            // Arrow-key navigation often changes only the cursor position; if
+            // that CUP is discarded, a remote prompt feels frozen until some
+            // unrelated cell changes.
             return String::new();
         }
         if let Some((row, col)) = next_cursor_position.filter(|_| next_cursor_visible) {
@@ -376,6 +381,7 @@ impl Renderer {
         self.painted_once = true;
         self.last_offset_r = Some(offset_r);
         self.last_size = Some((out_cols, out_rows));
+        self.last_cursor_position = next_cursor_position;
         out
     }
 }
@@ -642,6 +648,20 @@ mod tests {
         r.paint(&g, 5, 1);
         g.apply("\x1b[1;6H\x1b[?25l");
         assert!(r.paint(&g, 5, 1).is_empty());
+    }
+
+    #[test]
+    fn cursor_move_is_emitted_without_repainting_content() {
+        let mut g = Grid::new();
+        g.resize(8, 1);
+        g.apply("\x1b[1;1Hhello\x1b[1;2H\x1b[?25h");
+        let mut r = Renderer::new();
+        r.paint(&g, 8, 1);
+
+        g.apply("\x1b[1;5H");
+        let out = r.paint(&g, 8, 1);
+        assert!(out.contains("\x1b[1;5H\x1b[?25h"), "cursor move was lost: {out:?}");
+        assert!(!out.contains("hello"), "cursor move repainted content: {out:?}");
     }
 
     #[test]

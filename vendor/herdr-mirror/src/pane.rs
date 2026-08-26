@@ -497,6 +497,15 @@ fn has_mouse_seq(bytes: &[u8]) -> bool {
     bytes.windows(3).any(|w| w == [0x1b, b'[', b'<'])
 }
 
+/// Printable text can be verified incrementally, but terminal commands such
+/// as arrows, Enter, Escape, function keys, and mouse reports drive an
+/// authoritative TUI transition. The first resulting frame must be visible
+/// immediately; waiting for a duplicate frame makes menus and cursor movement
+/// feel one interaction behind.
+fn drives_interactive_redraw(bytes: &[u8]) -> bool {
+    bytes.iter().any(|b| !matches!(b, 0x20..=0x7e))
+}
+
 /// Detect a passive viewport jumping backwards into scrollback. The remote
 /// stream can emit these as a short cycle while an idle TUI redraws: most
 /// existing non-empty rows reappear several rows lower, then the live viewport
@@ -592,6 +601,10 @@ struct App {
     /// Passive viewport-shift suppression is disabled briefly after explicit
     /// input/scroll, when a downward shift is user-requested rather than noise.
     allow_viewport_shift_until: Option<Instant>,
+    /// Large-frame confirmation is an idle-flicker filter. Bypass it briefly
+    /// after arrows, Enter, Escape, function keys, or clicks so interactive TUI
+    /// transitions are never held waiting for a duplicate frame.
+    allow_interactive_frames_until: Option<Instant>,
     /// Candidate observe frame held for one confirmation frame. Idle remote
     /// redraws can briefly replace the entire viewport, then restore it.
     pending_frame: Option<Grid>,
@@ -619,9 +632,15 @@ struct App {
 /// poll lazily (only around mouse activity) and no faster than this
 const FG_POLL_INTERVAL: Duration = Duration::from_millis(1500);
 
-/// after input settles, re-poll once this much later to catch a foreground
-/// change the input caused (e.g. a TUI just exited); bypasses FG_POLL_INTERVAL
-const SETTLE_DELAY: Duration = Duration::from_millis(350);
+/// After input settles, re-poll once to catch a foreground change (for example
+/// a TUI exiting). Do not poll during the keystroke burst: on a high-RTT shared
+/// SSH master that bookkeeping channel competes with the frame the user is
+/// waiting to see.
+const SETTLE_DELAY: Duration = Duration::from_millis(750);
+
+/// Covers a remote RTT plus the TUI's immediate redraw without turning off the
+/// idle-frame filter during normal agent output.
+const INTERACTIVE_FRAME_WINDOW: Duration = Duration::from_millis(750);
 
 impl App {
     fn paint(&mut self) {
@@ -835,16 +854,20 @@ impl App {
         }
         if let Ok(decoded) = B64.decode(bytes) {
             self.wire_grid.apply(&String::from_utf8_lossy(&decoded));
-            let allow_shift = self.allow_viewport_shift_until.is_some_and(|until| until > Instant::now());
-            if frame.full != Some(true) && !allow_shift && dominant_downward_shift(&self.grid, &self.wire_grid).is_some() {
+            let now = Instant::now();
+            let allow_shift = self.allow_viewport_shift_until.is_some_and(|until| until > now);
+            let allow_interactive =
+                self.allow_interactive_frames_until.is_some_and(|until| until > now);
+            let authoritative = frame.full == Some(true) || allow_shift || allow_interactive;
+            if !authoritative && dominant_downward_shift(&self.grid, &self.wire_grid).is_some() {
                 self.pending_frame = None;
                 return;
             }
             // Control frames can exhibit the same transient viewport swap while
             // a remote TUI redraws in response to typing. Keep the one-frame
-            // confirmation rule in both modes; full frames and explicit scroll
-            // remain authoritative and immediate.
-            if frame.full == Some(true) || allow_shift {
+            // confirmation rule in both modes; full frames and explicit
+            // navigation/scroll remain authoritative and immediate.
+            if authoritative {
                 self.pending_frame = None;
                 self.grid = self.wire_grid.clone();
             } else if large_partial_change(&self.grid, &self.wire_grid) {
@@ -975,13 +998,10 @@ impl App {
             }
             return;
         }
-        // refresh the foreground classification on any input while active.
-        // keyboard reaches us even when the grab is released at a shell, so this
-        // is what catches a shell→TUI switch — a released grab means mouse events
-        // stop arriving here, so mouse alone can never trigger the re-poll.
-        self.spawn_foreground_poll(false);
-        // and re-check shortly after input settles, to catch a change the input
-        // just caused (e.g. `:q` quitting vim — the poll above still sees vim)
+        // Re-check only after the burst settles. Polling both immediately and
+        // after every burst opened avoidable SSH mux channels while arrows were
+        // driving menus. The delayed poll still catches shell↔TUI transitions;
+        // keyboard input reaches us even when mouse grab is released.
         self.settle_at = Some(Instant::now() + SETTLE_DELAY);
         // wheel becomes a semantic scroll (server decides app vs scrollback);
         // clicks/drags forward to the remote pty only when the foreground is a
@@ -1010,6 +1030,11 @@ impl App {
             self.send(s).await;
         }
         if !rest.is_empty() {
+            if drives_interactive_redraw(&rest) {
+                self.allow_interactive_frames_until =
+                    Some(Instant::now() + INTERACTIVE_FRAME_WINDOW);
+                self.pending_frame = None;
+            }
             let msg = json!({ "type": "terminal.input", "bytes": B64.encode(&rest) });
             self.send(msg).await;
             // optimistic local echo: draw the keystroke now, verify on frame
@@ -1101,6 +1126,7 @@ pub async fn run(args: Args) -> Result<()> {
         hint_clear_at: None,
         observe_resize_at: None,
         allow_viewport_shift_until: None,
+        allow_interactive_frames_until: None,
         pending_frame: None,
         predict: Predictor::new(),
         remote_is_shell: None,
@@ -1323,6 +1349,14 @@ mod tests {
         let mut small = before.clone();
         small.apply("\x1b[1;1Hchanged");
         assert!(!large_partial_change(&before, &small));
+    }
+
+    #[test]
+    fn terminal_commands_open_the_interactive_redraw_window() {
+        assert!(!drives_interactive_redraw(b"model"));
+        assert!(drives_interactive_redraw(b"\r"));
+        assert!(drives_interactive_redraw(b"\x1b[A"));
+        assert!(drives_interactive_redraw(b"\x1b[<0;10;5M"));
     }
 
     #[test]
