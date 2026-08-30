@@ -942,6 +942,23 @@ pub async fn cmd_teardown(env: Env) -> Result<()> {
     Ok(())
 }
 
+/// Close and forget one host's local mirror projection without touching the
+/// remote workspaces. Used after a configuration reload removes one host while
+/// the daemon continues serving the others.
+pub async fn cmd_teardown_host(env: Env, host_name: &str) -> Result<()> {
+    if host_name.is_empty()
+        || host_name.len() > 64
+        || !host_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(err("usage: herdr-mirror teardown-host <managed-host-name>"));
+    }
+    let log = Logger::new(&env.state_dir, true);
+    let local = ApiClient::connect(&env.local_socket).await?;
+    teardown(&local, &env.state_dir, host_name, &log, None).await?;
+    log.log(&format!("[{host_name}] local mirror teardown complete"));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

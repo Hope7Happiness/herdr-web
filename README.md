@@ -181,7 +181,7 @@ leaves it untouched and reports the conflict.
 The mirror executable runs only on the RC machine. Remote machines never
 receive that binary: they may use any OS/CPU architecture supported by Herdr,
 as long as their Herdr protocol is compatible. RC vendors the MIT-licensed
-`v0.2.2` source under `vendor/herdr-mirror`. It builds that source when Cargo is
+`v0.2.3` source under `vendor/herdr-mirror`. It builds that source when Cargo is
 available; otherwise it downloads an RC-built, checksum-verified native asset
 for macOS/Linux on x86_64/ARM64. The vendored source and license make the build
 auditable and independent of upstream release binaries.

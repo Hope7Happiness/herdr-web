@@ -9,6 +9,7 @@ const {
   MANAGED_HEADER,
   normalizeTargets,
   renderManagedConfig,
+  managedHostNames,
   configureNow,
   ensureMirror,
 } = require('../lib/remotes');
@@ -26,6 +27,11 @@ test('renders conservative mirror defaults and unique TOML host keys', () => {
   assert.match(config, /\[hosts\."work"\]/);
   assert.match(config, /\[hosts\."work-2"\]/);
   assert.match(config, /target = "alice@work:22"/);
+});
+
+test('reads host identities from an RC-managed mirror config', () => {
+  const config = renderManagedConfig(['alice@work:22', 'bob@work:22', 'hkm']);
+  assert.deepEqual(managedHostNames(config), ['work', 'work-2', 'hkm']);
 });
 
 test('configures and starts the vendored mirror', async (t) => {
@@ -94,11 +100,11 @@ test('does not shadow a mirror config from another search path', async (t) => {
   assert.equal(fs.existsSync(managedFile), false);
 });
 
-test('clearing RC-managed hosts removes config and pauses mirror', async (t) => {
+test('clearing RC-managed hosts tears down mirrors before removing config', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-rc-remotes-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'hosts.toml');
-  fs.writeFileSync(file, `${MANAGED_HEADER}\n`);
+  fs.writeFileSync(file, renderManagedConfig(['hkm']));
   const calls = [];
 
   const result = await configureNow([], {
@@ -107,5 +113,23 @@ test('clearing RC-managed hosts removes config and pauses mirror', async (t) => 
   });
   assert.equal(result.active, false);
   assert.equal(fs.existsSync(file), false);
-  assert.deepEqual(calls, [['pause']]);
+  assert.deepEqual(calls, [['teardown']]);
+});
+
+test('disconnecting one host reloads the daemon then tears down only that projection', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-rc-remotes-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'hosts.toml');
+  fs.writeFileSync(file, renderManagedConfig(['herdr-hanhong', 'hkm', 'aloha@100.88.127.20']));
+  const calls = [];
+
+  const result = await configureNow(['herdr-hanhong', 'aloha@100.88.127.20'], {
+    configFile: file,
+    run: async (args) => { calls.push(args); return { stdout: '' }; },
+    ensure: async () => false,
+  });
+
+  assert.equal(result.hosts, 2);
+  assert.deepEqual(calls, [['start'], ['teardown-host', 'hkm']]);
+  assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /target = "hkm"/);
 });

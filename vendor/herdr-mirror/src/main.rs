@@ -3,7 +3,7 @@
 //
 //   herdr-mirror daemon                 # control plane (foreground; `start` spawns this)
 //   herdr-mirror pane <host> <target>   # data plane: one per mirror pane
-//   herdr-mirror start|pause|ensure|status|once|restore|teardown
+//   herdr-mirror start|pause|ensure|status|once|restore|teardown|teardown-host
 //   herdr-mirror remote-workspace|remote-tab|remote-split <right|down>
 //   herdr-mirror remote-invoke <plugin>.<action>
 //   herdr-mirror remote-actions [host]              # discovery
@@ -84,6 +84,12 @@ fn run_on(rt: &tokio::runtime::Runtime, cmd: &str, rest: &[String]) -> Result<()
             rest.get(2).map(String::as_str),
         ),
         "teardown" => rt.block_on(daemon::cmd_teardown(Env::resolve()?)),
+        "teardown-host" => {
+            let host = rest
+                .get(1)
+                .ok_or_else(|| util::err("usage: herdr-mirror teardown-host <managed-host-name>"))?;
+            rt.block_on(daemon::cmd_teardown_host(Env::resolve()?, host))
+        }
         "pane" => {
             let args = pane::parse_args(&rest[1..])?;
             rt.block_on(pane::run(args))
@@ -116,7 +122,7 @@ fn run_on(rt: &tokio::runtime::Runtime, cmd: &str, rest: &[String]) -> Result<()
             rt.block_on(binding::unbind(Env::resolve()?, what))
         }
         other => Err(util::err(format!(
-            "unknown command: {other} (daemon|pane|start|pause|ensure|status|once|restore|teardown|remote-workspace|remote-tab|remote-split|remote-invoke|remote-actions|bind|unbind)"
+            "unknown command: {other} (daemon|pane|start|pause|ensure|status|once|restore|teardown|teardown-host|remote-workspace|remote-tab|remote-split|remote-invoke|remote-actions|bind|unbind)"
         ))),
     }
 }
