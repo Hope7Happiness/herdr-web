@@ -7,6 +7,8 @@ import { parseWaitArgs, pollMirrorAgent } from './herdr-rc.mjs';
 const execFileAsync = promisify(execFile);
 const HERDR_BIN = process.env.HERDR_RC_HERDR_BIN || 'herdr';
 const RC_CLI = new URL('./herdr-rc.mjs', import.meta.url);
+const PROMPT_KEY_DELAY_MS = 250;
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function usage() {
   console.error([
@@ -96,6 +98,32 @@ async function requireMirror(pane) {
   return current;
 }
 
+// A prompt is input, not rendered output. Waiting for the full message to
+// reappear in scrollback made submission depend on wrapping and alternate-
+// screen redraws: the text could already be in Codex's composer while the
+// helper timed out before Enter. Keep the two PTY writes separate (the mirror
+// queues them in order across takeover), pin the terminal identity, and never
+// use screen matching as an acknowledgement of keyboard delivery.
+export async function submitMirrorPrompt({
+  pane,
+  text,
+  resolveMirror = requireMirror,
+  sendText = (target, value) => run(HERDR_BIN, ['pane', 'send-text', target, value]),
+  sendEnter = (target) => run(HERDR_BIN, ['pane', 'send-keys', target, 'enter']),
+  sleep = delay,
+  keyDelayMs = PROMPT_KEY_DELAY_MS,
+}) {
+  const before = await resolveMirror(pane);
+  const terminalId = before.agent.terminal_id;
+  await sendText(pane, text);
+  await sleep(keyDelayMs);
+  const after = await resolveMirror(pane);
+  if (after.agent.terminal_id !== terminalId) {
+    throw new Error(`The pane occupant changed after text was entered in ${pane}; Enter was not sent.`);
+  }
+  return sendEnter(pane);
+}
+
 async function writeCommand(group, subcommand, args) {
   const pane = validatePane(args[0]);
   const current = await requireMirror(pane);
@@ -165,16 +193,7 @@ async function promptAgent(args) {
   const pane = validatePane(args[0]);
   const text = args.slice(1).join(' ').trim();
   if (!text) throw new Error('agent prompt requires a message.');
-  await requireMirror(pane);
-  await run(HERDR_BIN, ['pane', 'send-text', pane, text]);
-  await run(HERDR_BIN, [
-    'pane', 'wait-output', pane,
-    '--match', text,
-    '--source', 'recent',
-    '--lines', '2000',
-    '--timeout', '5000',
-  ], 10_000);
-  const result = await run(HERDR_BIN, ['pane', 'send-keys', pane, 'enter']);
+  const result = await submitMirrorPrompt({ pane, text });
   if (result.stdout) process.stdout.write(result.stdout);
 }
 

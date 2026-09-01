@@ -50,12 +50,19 @@ The companion refuses non-mirror panes. If the remote workspace is absent,
 diagnose or reconnect with `"$remote_cli"`, rather than bypassing it with
 per-operation SSH.
 
-For a normal prompt, use the guarded shortcut. It submits text, confirms a new
-local echo, and then sends Enter:
+For every normal prompt, use the guarded shortcut. It pins the mirror terminal
+identity and submits text followed by Enter as ordered requests without relying
+on screen/scrollback matching:
 
 ```bash
 "$remote_cli" agent prompt <mirror-pane-id> "<message>"
 ```
+
+Do not reconstruct a normal prompt from `pane send-text`, `pane wait-output`,
+and `pane send-keys`. Screen output is not an input acknowledgement: wrapping
+or an alternate-screen redraw can make the text unmatchable after it has
+already reached the composer. Use the pane commands below only for deliberate
+raw terminal interaction or to repair a visibly unsubmitted input.
 
 For deliberate low-level input, use the companion pane commands:
 
@@ -69,7 +76,7 @@ For waits on a mirror pane, use the companion's level-based wait instead of
 native `agent.wait`:
 
 ```bash
-"$remote_cli" agent wait <mirror-pane-id> --until idle --timeout 30000
+"$remote_cli" agent wait <mirror-pane-id> --timeout 30000
 ```
 
 The companion polls local `agent.get`, pins the local terminal identity, requires
