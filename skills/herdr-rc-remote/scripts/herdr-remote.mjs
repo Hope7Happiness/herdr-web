@@ -7,7 +7,10 @@ import { parseWaitArgs, pollMirrorAgent } from './herdr-rc.mjs';
 const execFileAsync = promisify(execFile);
 const HERDR_BIN = process.env.HERDR_RC_HERDR_BIN || 'herdr';
 const RC_CLI = new URL('./herdr-rc.mjs', import.meta.url);
-const PROMPT_KEY_DELAY_MS = 250;
+const PROMPT_ECHO_TIMEOUT_MS = 15_000;
+const PROMPT_START_TIMEOUT_MS = 5_000;
+const PROMPT_POLL_MS = 100;
+const PROMPT_CONFIRM_CHARS = 160;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function usage() {
@@ -98,30 +101,146 @@ async function requireMirror(pane) {
   return current;
 }
 
-// A prompt is input, not rendered output. Waiting for the full message to
-// reappear in scrollback made submission depend on wrapping and alternate-
-// screen redraws: the text could already be in Codex's composer while the
-// helper timed out before Enter. Keep the two PTY writes separate (the mirror
-// queues them in order across takeover), pin the terminal identity, and never
-// use screen matching as an acknowledgement of keyboard delivery.
+function normalizedText(value) {
+  return String(value || '').replace(/\s+/gu, ' ').trim();
+}
+
+function occurrences(haystack, needle) {
+  if (!needle) return 0;
+  let count = 0;
+  let offset = 0;
+  while ((offset = haystack.indexOf(needle, offset)) !== -1) {
+    count++;
+    offset += needle.length;
+  }
+  return count;
+}
+
+function promptNeedle(text) {
+  return normalizedText(text).slice(-PROMPT_CONFIRM_CHARS);
+}
+
+function pastePlaceholderCount(text) {
+  return (String(text || '').match(/\[Pasted Content \d+ chars\]/g) || []).length;
+}
+
+async function readPaneText(pane) {
+  const result = await run(HERDR_BIN, [
+    'pane', 'read', pane,
+    '--source', 'recent-unwrapped',
+    '--lines', '2000',
+  ], 10_000);
+  return result.stdout;
+}
+
+function stateChanged(before, after) {
+  if (before.agent_status !== after.agent_status) return true;
+  if (before.state_change_seq != null && after.state_change_seq != null) {
+    return before.state_change_seq !== after.state_change_seq;
+  }
+  return false;
+}
+
+async function waitForPromptStart({
+  pane,
+  before,
+  terminalId,
+  resolveMirror,
+  sleep,
+  now,
+  timeoutMs,
+  pollMs,
+}) {
+  const deadline = now() + timeoutMs;
+  while (now() < deadline) {
+    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+    const current = await resolveMirror(pane);
+    if (current.agent.terminal_id !== terminalId) {
+      throw new Error(`The pane occupant changed after the prompt was submitted in ${pane}.`);
+    }
+    if (stateChanged(before.agent, current.agent)) return true;
+  }
+  return false;
+}
+
+// The mirror may spend about 200ms switching from observe to control. Delaying
+// between two local CLI calls does not prove that a long paste has crossed that
+// boundary: queued text and Enter can still be flushed back-to-back. Confirm a
+// normalized tail of the paste in the rendered composer before Enter, then
+// require a lifecycle edge so this command cannot report success for text that
+// is still sitting unsubmitted in Codex.
 export async function submitMirrorPrompt({
   pane,
   text,
   resolveMirror = requireMirror,
   sendText = (target, value) => run(HERDR_BIN, ['pane', 'send-text', target, value]),
   sendEnter = (target) => run(HERDR_BIN, ['pane', 'send-keys', target, 'enter']),
+  readText = readPaneText,
   sleep = delay,
-  keyDelayMs = PROMPT_KEY_DELAY_MS,
+  now = Date.now,
+  echoTimeoutMs = PROMPT_ECHO_TIMEOUT_MS,
+  startTimeoutMs = PROMPT_START_TIMEOUT_MS,
+  pollMs = PROMPT_POLL_MS,
 }) {
   const before = await resolveMirror(pane);
   const terminalId = before.agent.terminal_id;
-  await sendText(pane, text);
-  await sleep(keyDelayMs);
-  const after = await resolveMirror(pane);
-  if (after.agent.terminal_id !== terminalId) {
-    throw new Error(`The pane occupant changed after text was entered in ${pane}; Enter was not sent.`);
+  if (before.agent.agent_status === 'blocked') {
+    throw new Error(`${pane} is blocked; inspect it before sending a prompt.`);
   }
-  return sendEnter(pane);
+
+  const needle = promptNeedle(text);
+  const baselineScreen = await readText(pane);
+  const baseline = occurrences(normalizedText(baselineScreen), needle);
+  const baselinePastePlaceholders = pastePlaceholderCount(baselineScreen);
+  await sendText(pane, text);
+
+  const echoDeadline = now() + echoTimeoutMs;
+  let echoed = false;
+  let sawNewPastePlaceholder = false;
+  while (now() < echoDeadline) {
+    await sleep(Math.min(pollMs, Math.max(0, echoDeadline - now())));
+    const current = await resolveMirror(pane);
+    if (current.agent.terminal_id !== terminalId) {
+      throw new Error(`The pane occupant changed after text was entered in ${pane}; Enter was not sent.`);
+    }
+    const screen = await readText(pane);
+    if (pastePlaceholderCount(screen) > baselinePastePlaceholders) {
+      sawNewPastePlaceholder = true;
+    }
+    if (occurrences(normalizedText(screen), needle) > baseline || sawNewPastePlaceholder) {
+      echoed = true;
+      break;
+    }
+  }
+  if (!echoed) {
+    throw new Error(`Timed out confirming prompt delivery in ${pane}; Enter was not sent.`);
+  }
+
+  const result = await sendEnter(pane);
+  // Ordinary shell mirrors do not have an agent lifecycle to acknowledge.
+  if (before.source !== 'agent' || !['idle', 'done'].includes(before.agent.agent_status)) {
+    return result;
+  }
+
+  if (await waitForPromptStart({
+    pane, before, terminalId, resolveMirror, sleep, now,
+    timeoutMs: startTimeoutMs,
+    pollMs,
+  })) return result;
+
+  // Codex represents large bracketed pastes as `[Pasted Content N chars]`.
+  // In that state the first Enter can accept/expand the paste instead of
+  // submitting it. Retry exactly once only when this invocation introduced
+  // such a placeholder and the first Enter produced no lifecycle edge.
+  if (sawNewPastePlaceholder) {
+    await sendEnter(pane);
+    if (await waitForPromptStart({
+      pane, before, terminalId, resolveMirror, sleep, now,
+      timeoutMs: startTimeoutMs,
+      pollMs,
+    })) return result;
+  }
+  throw new Error(`agent_prompt_stalled: ${pane} showed no lifecycle change after Enter; inspect before retrying.`);
 }
 
 async function writeCommand(group, subcommand, args) {
