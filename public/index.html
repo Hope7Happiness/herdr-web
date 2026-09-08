@@ -115,6 +115,7 @@
     transform-origin: left center; transform: scaleX(var(--boxscale, 0.72));
   }
   #term .row span { white-space: inherit; }
+  #term, #term * { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
   .b { font-weight: 700; } .dim2 { opacity: 0.6; } .i { font-style: italic; }
   .u { text-decoration: underline; } .st { text-decoration: line-through; }
   /* Fixed-width cells for glyphs with font-dependent advance (spinner
@@ -224,6 +225,12 @@
   .agentrow:hover { background: var(--bg3); }
   .agentrow.active { border-color: #34546b; background: #17212a; }
   .agentrow .txt { flex: 1; min-width: 0; }
+  .agentrow { touch-action: pan-y; }
+  .agent-pin { flex: none; border: 0; background: transparent; color: var(--fg-dim); padding: 10px; min-height: 44px; cursor: pointer; }
+  .agentrow.pinned .agent-pin { color: var(--accent); }
+  .agent-pin .pin-action { display: none; }
+  .agentrow.pin-open .pin-action, .agent-pin:focus-visible .pin-action { display: inline; }
+  #agent-search { width: 100%; margin-bottom: 8px; font-size: 16px; }
   .agentrow .current { flex: none; color: var(--accent); font-size: 11px; }
   .fld { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--fg-dim); }
   .hint { font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
@@ -318,6 +325,8 @@
   <div id="agentsheet" class="sheet">
     <div class="panel">
       <h2>Agents</h2>
+      <input id="agent-search" type="search" placeholder="搜索 workspace 或 pane" aria-label="搜索 agent" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="hint">右滑显示置顶操作，也可点右侧图钉</p>
       <div id="agent-list"></div>
       <div class="actions"><button id="agent-cancel">Close</button></div>
     </div>
@@ -426,6 +435,51 @@ let liveRenderFrame = 0;
 let lastRecent = null;      // last scrollback fetch — rendered ABOVE the live block
 let atBottom = true;        // view pinned to the live tail
 let sharedRuntimeResize = false;
+let selectingText = false;
+const deferredTextRenders = new Map();
+
+function setTextSelection(enabled) {
+  if (selectingText === enabled) return;
+  selectingText = enabled;
+  if (!enabled) {
+    for (const [el, rows] of deferredTextRenders) renderInto(el, rows);
+    deferredTextRenders.clear();
+    if (atBottom) pinBottomSoon();
+  }
+}
+function hasTerminalSelection() {
+  const selection = window.getSelection();
+  return !!selection && !selection.isCollapsed &&
+    (term.contains(selection.anchorNode) || term.contains(selection.focusNode));
+}
+// Preserve the DOM from finger-down, before Safari establishes its long-press
+// selection. Native scrolling and the system copy menu remain untouched.
+let selectionGesture = null;
+let selectionReleaseTimer = null;
+term.addEventListener('pointerdown', e => {
+  clearTimeout(selectionReleaseTimer);
+  selectionGesture = { x: e.clientX, y: e.clientY, type: e.pointerType };
+  setTextSelection(true);
+}, { passive: true });
+term.addEventListener('pointermove', e => {
+  if (selectionGesture && selectionGesture.type !== 'mouse' && !hasTerminalSelection() &&
+      Math.hypot(e.clientX - selectionGesture.x, e.clientY - selectionGesture.y) > 12) {
+    selectionGesture = null;
+    setTextSelection(false);
+  }
+}, { passive: true });
+function finishSelectionGesture() {
+  if (!selectionGesture && !selectingText) return;
+  selectionGesture = null;
+  clearTimeout(selectionReleaseTimer);
+  selectionReleaseTimer = setTimeout(() => setTextSelection(hasTerminalSelection()), 350);
+}
+document.addEventListener('pointerup', finishSelectionGesture, { passive: true });
+document.addEventListener('pointercancel', finishSelectionGesture, { passive: true });
+document.addEventListener('selectionchange', () => {
+  if (hasTerminalSelection()) setTextSelection(true);
+  else if (!selectionGesture) setTextSelection(false);
+});
 
 // One scroll container, two blocks: prefetched history above, live screen
 // below. Scrolling into history is plain native scrolling — zero fetches on
@@ -567,6 +621,7 @@ function renderRow(sourceSpans) {
 }
 
 function renderInto(el, rows) {
+  if (selectingText) { deferredTextRenders.set(el, rows); return; }
   const frag = document.createDocumentFragment();
   for (const r of rows) frag.appendChild(renderRow(r));
   el.replaceChildren(frag);
@@ -598,7 +653,7 @@ function fitFont() {
 function scrollToLive() {
   term.scrollTo({ top: term.scrollHeight, behavior: 'smooth' });
 }
-function pinBottom() { term.scrollTop = term.scrollHeight; }
+function pinBottom() { if (!selectingText) term.scrollTop = term.scrollHeight; }
 let pinFrame = 0;
 function pinBottomSoon() {
   if (pinFrame) return;
@@ -686,6 +741,10 @@ function screenW(rows) {
 }
 function renderHistRewrapped() {
   if (!lastRecent) return;
+  if (selectingText) {
+    deferredTextRenders.set(histEl, cutOverlap(lastRecent, liveRows));
+    return;
+  }
   const fromBottom = term.scrollHeight - term.scrollTop;
   renderInto(histEl, cutOverlap(lastRecent, liveRows));
   if (atBottom) pinBottom();
@@ -799,6 +858,22 @@ const recentPanes = (() => {
   }
   catch { return {}; }
 })();
+const pinnedPanes = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('herdr-web-pinned-panes') || '[]');
+    return new Set(Array.isArray(saved) ? saved.filter(id => typeof id === 'string') : []);
+  } catch { return new Set(); }
+})();
+let agentListSignature = '';
+function togglePinnedPane(paneId) {
+  if (pinnedPanes.has(paneId)) pinnedPanes.delete(paneId);
+  else pinnedPanes.add(paneId);
+  localStorage.setItem('herdr-web-pinned-panes', JSON.stringify([...pinnedPanes]));
+  renderTabs();
+}
+function isTerminalEntry(p) {
+  return String(p.display_agent || p.agent || '').toLowerCase() !== 'codex';
+}
 let recentClock = Math.max(Date.now(), ...Object.values(recentPanes).filter(Number.isFinite));
 function saveRecentPanes() {
   localStorage.setItem('herdr-web-recent-panes', JSON.stringify(recentPanes));
@@ -835,8 +910,11 @@ function paneEntries() {
   const out = [];
   for (const w of sessions) for (const p of w.panes) out.push({ w, p, originalIndex: out.length });
   out.sort((a, b) => {
+    const pinOrder = Number(pinnedPanes.has(b.p.pane_id)) - Number(pinnedPanes.has(a.p.pane_id));
+    const terminalOrder = pinnedPanes.has(a.p.pane_id) && pinnedPanes.has(b.p.pane_id)
+      ? 0 : Number(isTerminalEntry(a.p)) - Number(isTerminalEntry(b.p));
     const activeOrder = Number(b.p.pane_id === activePane) - Number(a.p.pane_id === activePane);
-    return activeOrder
+    return pinOrder || terminalOrder || activeOrder
       || (recentPanes[b.p.pane_id] || 0) - (recentPanes[a.p.pane_id] || 0)
       || a.originalIndex - b.originalIndex;
   });
@@ -874,12 +952,18 @@ function renderTabs() {
     agentPickEl.append(txt, chev);
   }
 
+  const query = $('agent-search').value.trim().toLocaleLowerCase();
+  const filtered = entries.filter(({ w, p }) => `${workspaceLabel(w)} ${paneLabel(p)} ${p.pane_id}`.toLocaleLowerCase().includes(query));
+  const signature = JSON.stringify(filtered.map(({ w, p }) => [workspaceLabel(w), paneLabel(p), p.pane_id, effectiveStatus(p), pinnedPanes.has(p.pane_id), p.pane_id === activePane]));
+  if (signature !== agentListSignature) {
+  agentListSignature = signature;
   const frag = document.createDocumentFragment();
-  for (const { w, p } of entries) {
+  for (const { w, p } of filtered) {
     const st = effectiveStatus(p);
     const row = document.createElement('div');
     row.className = 'agentrow' + (p.pane_id === activePane ? ' active' : '');
     row.dataset.pane = p.pane_id;
+    row.classList.toggle('pinned', pinnedPanes.has(p.pane_id));
     const dot = document.createElement('div');
     dot.className = 'status-dot ' + st;
     const txt = document.createElement('div');
@@ -892,10 +976,37 @@ function renderTabs() {
     sub.textContent = paneLabel(p);
     txt.append(lbl, sub);
     row.append(dot, txt);
-    row.addEventListener('click', () => choosePane(p.pane_id));
+    const pin = document.createElement('button');
+    pin.type = 'button';
+    pin.className = 'agent-pin';
+    const pinLabel = pinnedPanes.has(p.pane_id) ? '取消置顶' : '置顶';
+    pin.setAttribute('aria-label', `${pinLabel} ${paneLabel(p)}`);
+    pin.setAttribute('aria-pressed', String(pinnedPanes.has(p.pane_id)));
+    pin.innerHTML = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m16 3 5 5-4 1-4 4-1 5-6-6 5-1 4-4Z"/><path d="m2 22 7-7"/></svg><span class="pin-action"></span>';
+    pin.querySelector('span').textContent = pinLabel;
+    pin.addEventListener('click', e => { e.stopPropagation(); togglePinnedPane(p.pane_id); });
+    row.append(pin);
+    let start = null, suppressClick = false;
+    row.addEventListener('pointerdown', e => { start = { x: e.clientX, y: e.clientY }; suppressClick = false; });
+    row.addEventListener('pointerup', e => {
+      if (!start) return;
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      start = null;
+      if (dx > 45 && Math.abs(dy) < 30) {
+        row.classList.add('pin-open');
+        suppressClick = true;
+      }
+    });
+    row.addEventListener('pointercancel', () => { start = null; });
+    row.addEventListener('click', () => {
+      if (suppressClick) { suppressClick = false; return; }
+      choosePane(p.pane_id);
+    });
     frag.appendChild(row);
   }
   agentListEl.replaceChildren(frag);
+  if (!filtered.length) agentListEl.textContent = '没有匹配的 agent';
+  }
   renderAttnChip();
   emptyEl.style.display = activePane ? 'none' : 'flex';
 }
@@ -923,6 +1034,7 @@ agentPickEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAgentPicker(); }
 });
 $('agent-cancel').addEventListener('click', closeAgentPicker);
+$('agent-search').addEventListener('input', renderTabs);
 $('agentsheet').addEventListener('click', (e) => { if (e.target === $('agentsheet')) closeAgentPicker(); });
 
 // Attention chip: count + one-tap jump to the next agent needing you
@@ -988,6 +1100,14 @@ function choosePane(paneId) {
   selectPane(paneId);
 }
 function selectPane(paneId) {
+  clearTimeout(selectionReleaseTimer);
+  selectionGesture = null;
+  if (hasTerminalSelection()) window.getSelection().removeAllRanges();
+  deferredTextRenders.clear();
+  setTextSelection(false);
+  if (liveRenderFrame) cancelAnimationFrame(liveRenderFrame);
+  liveRenderFrame = 0;
+  queuedLiveRows = null;
   activePane = paneId;
   if (paneId) {
     touchPane(paneId);
