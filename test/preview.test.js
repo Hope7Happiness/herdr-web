@@ -3,6 +3,33 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { previewBase, rewriteLocation, shim, extractTitle } = require('../lib/preview');
+const http = require('node:http');
+const preview = require('../lib/preview');
+const { securityHeaders } = require('../lib/security');
+
+test('preview HTML permits same-origin referrer routing for root-relative images', async (t) => {
+  const upstream = http.createServer((req, res) => {
+    if (req.url === '/asset?image=1') res.writeHead(200, { 'content-type': 'image/png' }).end('image-bytes');
+    else res.writeHead(200, { 'content-type': 'text/html' }).end('<head></head><img src="/asset?image=1">');
+  });
+  const proxy = http.createServer((req, res) => securityHeaders(req, res, () => {
+    if (!preview.handle(req, res)) res.writeHead(404).end();
+  }));
+  t.after(() => { proxy.closeAllConnections(); proxy.close(); upstream.closeAllConnections(); upstream.close(); });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  const port = upstream.address().port;
+  preview.allow(port);
+  const origin = `http://127.0.0.1:${proxy.address().port}`;
+  const pageURL = `${origin}/p/${port}/`;
+  const page = await fetch(pageURL);
+  assert.equal(page.headers.get('referrer-policy'), 'same-origin');
+  await page.text();
+  const asset = await fetch(`${origin}/asset?image=1`, { headers: { referer: pageURL } });
+  assert.equal(asset.status, 200);
+  assert.equal(asset.headers.get('content-type'), 'image/png');
+  assert.equal(await asset.text(), 'image-bytes');
+});
 
 test('uses the upstream document directory for relative preview navigation', () => {
   assert.equal(previewBase(5173, '/'), '/p/5173/');
