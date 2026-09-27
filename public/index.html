@@ -11,20 +11,37 @@
 <link rel="apple-touch-icon" href="icon-180.png" sizes="180x180">
 <meta name="apple-mobile-web-app-title" content="herdr">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<meta name="theme-color" content="#090b0f">
+<meta name="theme-color" content="#ededed" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111111" media="(prefers-color-scheme: dark)">
 <style>
   :root {
-    --bg: #090b0f; --bg2: #11151a; --bg3: #191e25; --surface: #20262d;
-    --fg: #f3f1ec; --fg-dim: #919ba7; --fg-faint: #5e6873;
-    --accent: #55b8ff; --accent-strong: #198cff; --border: #2b3139;
-    --st-working: #48d597; --st-blocked: #ffb454; --st-done: #6ba8ff;
-    --st-idle: #707a85; --st-unknown: #4d5660; --danger: #ff7068;
+    color-scheme: light;
+    --bg: #ededed; --bg2: #f7f7f7; --bg3: #ffffff; --surface: #ffffff;
+    --fg: #191919; --fg-dim: #666666; --fg-faint: #767676;
+    --accent: #07833f; --accent-strong: #07c160; --border: #dedede;
+    --st-working: #07c160; --st-blocked: #b7791f; --st-done: #576b95;
+    --st-idle: #919191; --st-unknown: #b2b2b2; --danger: #e64340;
+    --selected-bg: #e2f4e8; --selected-border: #b7dfc7;
+    --badge-ink: #ffffff; --shadow: 0 3px 14px rgba(0,0,0,.10);
+    --scrim: rgba(0,0,0,.35); --button-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #111111; --bg2: #191919; --bg3: #252525; --surface: #2c2c2c;
+      --fg: #ededed; --fg-dim: #aaaaaa; --fg-faint: #969696;
+      --accent: #42cf85; --border: #363636;
+      --st-blocked: #e5ad54; --st-done: #8da6cf; --danger: #ff6965;
+      --selected-bg: #203b2d; --selected-border: #365e47;
+      --badge-ink: #191919; --shadow: 0 4px 16px rgba(0,0,0,.35);
+      --scrim: rgba(0,0,0,.6); --button-ink: #111111;
+    }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
   body {
     background: var(--bg); color: var(--fg);
-    font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
     display: flex; flex-direction: column;
     height: 100dvh;
     padding-bottom: env(safe-area-inset-bottom);
@@ -41,16 +58,16 @@
   #agentpick {
     display: flex; align-items: center; gap: 8px;
     padding: 5px 8px 5px 13px; border-radius: 6px; flex: 1; min-width: 0;
-    min-height: 38px; background: var(--bg3); border: 1px solid transparent;
+    min-height: 38px; background: transparent; border: 1px solid transparent;
     cursor: pointer; user-select: none;
   }
   #agentpick:hover, #agentpick:focus-visible { border-color: var(--border); outline: none; }
   #agentpick .txt { flex: 1; min-width: 0; }
   #agentpick .lbl, .agentrow .lbl {
-    font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   #agentpick .sub, .agentrow .sub {
-    font-size: 10px; color: var(--fg-dim); white-space: nowrap;
+    font-size: 12px; color: var(--fg-dim); white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
   }
   #agentpick .chev { color: var(--fg-faint); flex: none; display: flex; align-items: center; gap: 2px; font: 11px/1 ui-monospace, monospace; }
@@ -77,14 +94,14 @@
     border-radius: 6px; background: transparent; border: 1px solid transparent;
     padding: 0; color: var(--st-done); user-select: none;
   }
-  #attn span { position: absolute; right: 1px; top: 1px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: var(--st-done); color: #07111a; font: 700 9px/15px ui-monospace, monospace; text-align: center; }
+  #attn span { position: absolute; right: 1px; top: 1px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: var(--st-done); color: var(--badge-ink); font: 700 9px/15px ui-monospace, monospace; text-align: center; }
   #attn.blocked { border-color: var(--st-blocked); color: var(--st-blocked); animation: pulse 1s ease-in-out infinite; }
-  #attn.blocked span { background: var(--st-blocked); color: #1a1005; }
+  #attn.blocked span { background: var(--st-blocked); color: var(--badge-ink); }
   #toast {
     position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 30;
     background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--st-blocked);
     border-radius: 6px; padding: 10px 14px; font-size: 13px; display: none;
-    max-width: 90vw; box-shadow: 0 4px 14px rgba(0,0,0,.5); cursor: pointer;
+    max-width: 90vw; box-shadow: var(--shadow); cursor: pointer;
   }
   #toast.show { display: block; }
 
@@ -92,7 +109,7 @@
   #termwrap { flex: 1; min-height: 0; position: relative; background: var(--bg); box-shadow: inset 0 1px rgba(255,255,255,.02); }
   #term {
     height: 100%; overflow-y: auto; overflow-x: hidden;
-    font-family: 'Cascadia Mono', 'Roboto Mono', ui-monospace, monospace;
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'PingFang SC', monospace;
     font-size: 11px; font-variant-ligatures: none; letter-spacing: 0; tab-size: 8;
     padding: 6px 4px; overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
@@ -125,8 +142,8 @@
   #livekey {
     position: absolute; z-index: 4; right: 10px; bottom: 10px; display: none;
     height: 34px; padding: 0 11px; align-items: center; gap: 5px; border-radius: 17px;
-    background: var(--surface); color: var(--accent); border: 1px solid #3b759c;
-    box-shadow: 0 5px 18px rgba(0,0,0,.35); font: 600 11px/1 inherit; cursor: pointer;
+    background: var(--surface); color: var(--accent); border: 1px solid var(--border);
+    box-shadow: var(--shadow); font: inherit; font-size: 12px; cursor: pointer;
   }
   #livekey.show { display: flex; animation: live-in 140ms ease-out; }
   #termwrap.previewing #livekey { display: none; }
@@ -177,34 +194,34 @@
   }
   .qk {
     min-width: 0; width: 100%; height: 36px; padding: 0 3px; border-radius: 5px;
-    background: var(--bg3); border: 1px solid var(--border); color: #d6d9dc;
+    background: var(--bg3); border: 1px solid var(--border); color: var(--fg);
     display: flex; align-items: center; justify-content: center; gap: 3px;
-    cursor: pointer; user-select: none; font: 600 10.5px/1 ui-monospace, monospace;
+    cursor: pointer; user-select: none; font: 500 11px/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
   }
   .qk svg { width: 15px; height: 15px; }
-  .qk:hover, .qk:focus-visible { border-color: #48515c; color: var(--fg); outline: none; }
-  .qk:active { background: #252c34; transform: translateY(1px); }
-  .qk.pending { color: var(--accent); border-color: #3b759c; }
+  .qk:hover, .qk:focus-visible { border-color: var(--accent); color: var(--fg); outline: none; }
+  .qk:active { background: var(--selected-bg); transform: translateY(1px); }
+  .qk.pending { color: var(--accent); border-color: var(--accent); }
   .qk:disabled { opacity: .65; cursor: wait; }
   #inputrow { display: flex; gap: 7px; padding: 5px 7px 8px; align-items: flex-end; }
   #msg {
     flex: 1; min-height: 42px; max-height: 120px; resize: none;
-    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    background: var(--bg3); color: var(--fg); border: 1px solid var(--border);
     border-radius: 7px; padding: 10px 12px; font-size: 16px; font-family: inherit;
     outline: none;
   }
   #msg::placeholder { color: var(--fg-faint); }
-  #msg:focus { border-color: #3e8fc5; box-shadow: 0 0 0 2px rgba(85,184,255,.08); }
+  #msg:focus { border-color: var(--accent-strong); box-shadow: 0 0 0 2px rgba(7,193,96,.08); }
   #send {
-    flex: none; width: 42px; height: 42px; border-radius: 7px; border: 1px solid #6ac1ff;
+    flex: none; width: 42px; height: 42px; border-radius: 7px; border: 1px solid var(--accent-strong);
     background: var(--accent-strong); color: #fff; display: flex; align-items: center;
     justify-content: center; cursor: pointer;
   }
-  #send:active { transform: translateY(1px); background: #087ce0; }
+  #send:active { transform: translateY(1px); background: #06ad56; }
 
   /* ---- new session sheet ---- */
   #sheet, .sheet {
-    position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 20;
+    position: fixed; inset: 0; background: var(--scrim); display: none; z-index: 20;
   }
   #sheet.show, .sheet.show { display: flex; align-items: flex-end; }
   #sheet .panel, .sheet .panel {
@@ -223,7 +240,7 @@
     background: transparent; border: 1px solid transparent;
   }
   .agentrow:hover { background: var(--bg3); }
-  .agentrow.active { border-color: #34546b; background: #17212a; }
+  .agentrow.active { border-color: var(--selected-border); background: var(--selected-bg); }
   .agentrow .txt { flex: 1; min-width: 0; }
   .agentrow { touch-action: pan-y; }
   .agent-pin { flex: none; border: 0; background: transparent; color: var(--fg-dim); padding: 10px; min-height: 44px; cursor: pointer; }
@@ -258,7 +275,8 @@
     padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--bg3); color: var(--fg); font-size: 14px; cursor: pointer;
   }
-  #sheet button.primary, .sheet button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #sheet button.primary, .sheet button.primary { background: var(--accent); border-color: var(--accent); color: var(--button-ink); }
+  #term ::selection { background: var(--selected-border); color: var(--fg); }
   @media (max-width: 374px) {
     #quickkeys { grid-template-columns: 34px 33px 38px 32px repeat(4, minmax(25px, 1fr)) 33px; }
     .qk { font-size: 9.5px; }
@@ -405,6 +423,41 @@ function colorOf(c) {
   if (c[0] === 'a') return ANSI16[+c.slice(1)] || null;
   if (c[0] === 'x') return PAL256[+c.slice(1)] || null;
   return null;
+}
+
+// Dark-terminal foregrounds can be almost white. Keep their hue but ensure
+// readable contrast against the WeChat-style light canvas. Explicit ANSI
+// backgrounds retain their original foreground/background pair.
+const systemDarkMode = window.matchMedia('(prefers-color-scheme: dark)');
+function lightCanvasInk(color) {
+  if (systemDarkMode.matches) return color;
+  if (!color || !/^#[0-9a-f]{6}$/i.test(color)) return color;
+  let rgb = [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16));
+  const luminance = values => values.reduce((sum, v, i) => {
+    v /= 255;
+    return sum + (v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4) * [.2126, .7152, .0722][i];
+  }, 0);
+  while (luminance(rgb) > .14) rgb = rgb.map(v => Math.floor(v * .88));
+  return '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+function terminalColors(span) {
+  let fg = colorOf(span.f), bg = colorOf(span.g);
+  if (span.m & 16) {
+    return { fg: 'var(--fg)', bg: 'var(--selected-bg)' };
+  }
+  if (!bg) return { fg: lightCanvasInk(fg), bg: null };
+  const rgb = /^#[0-9a-f]{6}$/i.test(bg) ? [1, 3, 5].map(i => parseInt(bg.slice(i, i + 2), 16)) : null;
+  // Neutral terminal fills (including the old blue-black default) should
+  // follow the page, rather than leave dark rectangles on the light canvas.
+  if (rgb && Math.max(...rgb) - Math.min(...rgb) < 40) {
+    return { fg: lightCanvasInk(fg), bg: 'var(--bg3)' };
+  }
+  if (!systemDarkMode.matches && rgb) {
+    bg = '#' + rgb.map(v => Math.round(255 * .88 + v * .12).toString(16).padStart(2, '0')).join('');
+    return { fg: lightCanvasInk(fg), bg };
+  }
+  return { fg: fg || '#ededed', bg };
 }
 
 // ---------------------------------------------------------------------------
@@ -603,8 +656,7 @@ function renderRow(sourceSpans) {
   for (const s of spans) {
     const el = document.createElement('span');
     if (!appendLinkified(el, s.t)) appendGlyphAware(el, s.t);
-    let fg = colorOf(s.f), bg = colorOf(s.g);
-    if (s.m & 16) { const t = fg || '#e6edf3'; fg = bg || '#0d1117'; bg = t; }
+    const { fg, bg } = terminalColors(s);
     if (fg) el.style.color = fg;
     if (bg) el.style.backgroundColor = bg;
     let cls = '';
@@ -620,7 +672,16 @@ function renderRow(sourceSpans) {
   return div;
 }
 
+const renderedTextRows = new Map();
+systemDarkMode.addEventListener('change', () => {
+  // Recolor the existing screen and frozen history without fetching or
+  // changing scroll position. Active selections keep their DOM until cleared.
+  for (const [el, rows] of renderedTextRows) {
+    renderInto(el, deferredTextRenders.get(el) || rows);
+  }
+});
 function renderInto(el, rows) {
+  renderedTextRows.set(el, rows);
   if (selectingText) { deferredTextRenders.set(el, rows); return; }
   const frag = document.createDocumentFragment();
   for (const r of rows) frag.appendChild(renderRow(r));
@@ -1100,6 +1161,7 @@ function choosePane(paneId) {
   selectPane(paneId);
 }
 function selectPane(paneId) {
+  renderedTextRows.clear();
   clearTimeout(selectionReleaseTimer);
   selectionGesture = null;
   if (hasTerminalSelection()) window.getSelection().removeAllRanges();
