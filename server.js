@@ -54,6 +54,7 @@ const state = {
   eventSub: null,          // herdr subscription handle
   paneIds: [],             // pane ids covered by current subscription
   refreshTimer: null,
+  lastRefreshAt: 0,      // snapshot 限速节流
   statusTimer: null,
 };
 
@@ -73,6 +74,10 @@ function sessionsMessage() {
 }
 
 async function refreshSnapshot(reason) {
+  // 无网页客户端时不向 herdr 发任何请求（session.snapshot 会同步计算每个 pane 的
+  // foreground_cwd，阻塞 herdr 主线程，agent 忙时可冻结整个 TUI）
+  if (state.webClients.size === 0) return;
+  state.lastRefreshAt = Date.now();
   try {
     const res = await herdr.request('session.snapshot');
     state.snapshot = res.snapshot;
@@ -86,11 +91,14 @@ async function refreshSnapshot(reason) {
 
 // Debounced snapshot refresh — lifecycle events often arrive in bursts.
 function scheduleRefresh(reason) {
+  if (state.webClients.size === 0) return;
   if (state.refreshTimer) return;
+  const since = Date.now() - (state.lastRefreshAt || 0);
+  const delay = Math.max(150, 500 - since);
   state.refreshTimer = setTimeout(() => {
     state.refreshTimer = null;
     refreshSnapshot(reason);
-  }, 150);
+  }, delay);
 }
 
 function sessionList() {
@@ -127,6 +135,11 @@ function sessionList() {
 function resubscribe(paneIds) {
   state.paneIds = paneIds;
   state.eventSub?.close();
+  state.eventSub = null;
+  if (state.webClients.size === 0) {
+    jlog('info', 'idle-no-clients', { note: 'event subscription paused' });
+    return;
+  }
   const subs = [
     { type: 'workspace.created' }, { type: 'workspace.closed' }, { type: 'workspace.renamed' },
     { type: 'tab.created' }, { type: 'tab.closed' },
